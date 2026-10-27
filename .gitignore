@@ -1,0 +1,8 @@
+# Saída de cada voo: o operador lê arquivos do projeto-alvo, então o bruto não vai para o git.
+ops/*/operator.jsonl
+ops/*/overwatch.log
+ops/*/baseline.log
+ops/*/_brief.txt
+__pycache__/
+*.pyc
+.env

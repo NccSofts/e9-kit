@@ -1,0 +1,32 @@
+{
+  "op": "exemplo-slug",
+  "target_repo": "/tmp/e9-exemplo/projeto",
+  "branch": "feat/slug",
+  "worktree": "/tmp/e9-exemplo/wt-slug",
+  "prod_markers": ["/srv/producao"],
+  "commit_identity": {
+    "name": "E-9",
+    "email": "e9@localhost"
+  },
+  "commit": {
+    "subject": "feat(texto): slug para títulos"
+  },
+  "operator": {
+    "model": "sonnet",
+    "timeout_s": 1200,
+    "cmd_template": "claude -p \"$(cat {brief_file})\" --output-format stream-json --verbose --add-dir {worktree} --permission-mode acceptEdits --allowedTools \"Bash(python3 -m unittest:*)\" --model {model}"
+  },
+  "overwatch": {
+    "test_cmd": "python3 -m unittest discover -s tests -t .",
+    "timeout_s": 120
+  },
+  "expected_artifacts": [
+    "texto.py",
+    "tests/test_texto.py"
+  ],
+  "_notas": [
+    "Antes do primeiro voo: sh exemplo/preparar.sh (cria o repositório-alvo em /tmp/e9-exemplo/projeto).",
+    "prod_markers: troque pelos trechos de caminho ou nome de máquina que, no seu ambiente, significam produção. Se o target_repo bater em um deles, a tarefa é recusada antes de começar.",
+    "allowedTools: em claude -p ninguém aprova comando novo; o que não estiver liberado aqui é recusado em silêncio. O E-9 copia esta lista para o briefing."
+  ]
+}
