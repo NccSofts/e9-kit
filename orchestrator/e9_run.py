@@ -49,7 +49,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 # Console em UTF-8 (Windows usa cp1252 por default e engasga em ─ · ←).
@@ -179,7 +179,12 @@ def build_brief(opord: Path, roe: Path, cfg: dict | None = None, *,
         "- **NUNCA rode nada em segundo plano** (`run_in_background`, `&`, `nohup`). Você roda em\n"
         "  `claude -p`: quando você para de falar, a sessão acaba, e a notificação de \"terminou\"\n"
         "  nunca chega. Rode o portão em primeiro plano e ESPERE: o teto do Bash aqui é de 20 min.\n"
-        "  O que sobrar rodando na worktree quando você terminar é morto pelo E-9 antes do gate.\n\n"
+        "  O que sobrar rodando na worktree quando você terminar é morto pelo E-9 antes do gate.\n"
+        "- **Não passe ao Bash um `timeout` menor que o tempo do portão** (v0.5.1). Comando que passa\n"
+        "  do `timeout` pedido NÃO é morto: o Claude Code o joga para segundo plano sozinho, e você\n"
+        "  fica esperando um aviso que não chega. Foi o que encerrou uma tarefa real: `timeout: 300000` (5\n"
+        "  min) numa suíte de 6m20s. Sem `timeout`, vale o teto acima; com ele, use o que o E-9\n"
+        "  mediu na seção TEMPO DO PORTÃO NESTE VOO, no fim deste briefing.\n\n"
         "## Desvios da OPORD (v0.3.3 — obrigatório no relatório final)\n"
         "- Feche o relatório com uma seção `## Desvios da OPORD`. Para CADA ponto em que o que\n"
         "  você fez não é literalmente o que a OPORD descreve, uma linha: **a OPORD dizia** → **eu\n"
@@ -202,7 +207,9 @@ def build_brief(opord: Path, roe: Path, cfg: dict | None = None, *,
                      "pulá-los (nada de skip, xfail ou conftest que os desligue): o E-9 confere o "
                      "sha256 de cada um, e mexer é abort mesmo com tudo verde. Achou um teste "
                      "errado? HOLD + SITREP, e declare nos desvios.\n\n"
-                     + "\n".join(f"- `{rel}`" for rel in aceite) + "\n")
+                     # v0.5 — caminho completo, NA WORKTREE: no voo de prova de 28/10 o operador leu o
+                     # caminho relativo contra o repo-alvo da OPORD, fora da pasta liberada, e foi barrado
+                     + "\n".join(f"- `{_na_worktree(cfg, rel)}`" for rel in aceite) + "\n")
     liberados = comandos_liberados(cfg) if cfg else []
     if liberados:
         preamble += ("\n\n" + "=" * 60 + "\n# COMANDOS BASH LIBERADOS (exatamente nestas formas)\n\n"
@@ -211,6 +218,50 @@ def build_brief(opord: Path, roe: Path, cfg: dict | None = None, *,
                      "é livre. Para ler arquivo, use Read/Grep/Glob, não `cat`/`grep`/`find`.\n\n"
                      + "\n".join(f"- `{c}…`" for c in liberados) + "\n")
     return preamble
+
+
+def voos_anteriores(op_dir: Path) -> list[dict]:
+    """O histórico de voos desta op, a partir do metrics.json que o voo novo vai substituir."""
+    try:
+        prev = json.loads((Path(op_dir) / "metrics.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    if not prev.get("status"):
+        return list(prev.get("voos_anteriores") or [])
+    resumo = {"rc": prev.get("rc"), "status": (prev.get("status") or "")[:160],
+              "finished_at": prev.get("finished_at"), "gate": prev.get("gate"),
+              "custo": (prev.get("operator") or {}).get("total_cost_usd")}
+    return list(prev.get("voos_anteriores") or []) + [resumo]
+
+
+def timeout_do_portao_ms(cfg, base_s: float) -> int:
+    """O `timeout` mínimo para o operador passar ao Bash do portão: o dobro do que a linha de base
+    levou, nunca abaixo de 10 min e nunca acima do teto do `cmd_template` (BASH_MAX_TIMEOUT_MS)."""
+    m = re.search(r"BASH_MAX_TIMEOUT_MS=(\d+)", (cfg.get("operator") or {}).get("cmd_template", ""))
+    teto = int(m.group(1)) if m else 1_200_000
+    return min(max(int(2 * base_s * 1000), 600_000), teto)
+
+
+def anexar_tempo_do_portao(brief_file: Path, cfg, inicio_base: str) -> None:
+    """v0.5.1 — depois da linha de base, o briefing ganha o tempo medido do portão neste voo.
+    Numa tarefa real o operador pediu `timeout` de 5 min para uma suíte de 6m20s: o Bash foi para segundo
+    plano sozinho, e o operador encerrou "aguardando". O harness sabe o tempo; agora o operador também."""
+    try:
+        ini = datetime.fromisoformat(inicio_base.replace("Z", "+00:00"))
+        base_s = (datetime.now(timezone.utc) - ini).total_seconds()
+        ms = timeout_do_portao_ms(cfg, base_s)
+        with open(brief_file, "a", encoding="utf-8") as h:
+            h.write("\n\n" + "=" * 60 + "\n# TEMPO DO PORTÃO NESTE VOO\n\n"
+                    f"A linha de base (o gate no `main`, antes de você) levou {base_s / 60:.1f} min. "
+                    f"Ao rodar o portão no Bash, passe `timeout: {ms}` (ou não passe nenhum). "
+                    "Menos que isso e o comando vai para segundo plano sem você pedir.\n")
+    except (OSError, ValueError, TypeError):
+        pass
+
+
+def _na_worktree(cfg, rel: str) -> str:
+    wt = (cfg or {}).get("worktree")
+    return f"{wt.rstrip('/')}/{rel}" if wt else rel
 
 
 def comandos_liberados(cfg) -> list[str]:
@@ -642,6 +693,11 @@ def stage_and_commit(cfg, op_id, aceite=()):
     return (rc == 0), (out if rc != 0 else f"commitado por {name}: {', '.join(resolved)}")
 
 
+# v0.5.1 — o voo que deixa algo para mergear termina pedindo a revisão no alvo (revisar.py).
+RC_PEDE_REVISAO = (0, 3, 4, 10)
+LEMBRETE_REVISAO = "## Próximo passo — revisão no alvo"
+
+
 def write_aar(op_dir: Path, op_id, results: dict):
     """Grava AAR.md + metrics.json na pasta da op."""
     (op_dir / "metrics.json").write_text(
@@ -702,10 +758,35 @@ def write_aar(op_dir: Path, op_id, results: dict):
         lines.append("")
     if results.get("overwatch_tail"):
         lines += ["## Overwatch (fim da saída)", "", "```", results["overwatch_tail"], "```", ""]
+    if (results.get("rc") in RC_PEDE_REVISAO and not results.get("treino")
+            and not results.get("revisao")):
+        lines += [LEMBRETE_REVISAO, "",
+                  "Depois do merge (ou do descarte), a sessão do alvo grava o desfecho — é o número que o",
+                  "gate não dá,:", "", "```",
+                  f"python orchestrator/revisar.py --op ops/{op_dir.name} --como-veio --commit-alvo <sha>",
+                  f"python orchestrator/revisar.py --op ops/{op_dir.name} --consertado \"o que mudou\" --commit-alvo <sha>",
+                  f"python orchestrator/revisar.py --op ops/{op_dir.name} --descartado \"por quê\"",
+                  "```", ""]
     lines += ["## Arquivos brutos (ficam na máquina, fora do git)",
               "- `operator.jsonl` — saída integral do operador (stream-json).",
               "- `overwatch.log` — saída integral do gate.", ""]
     aar.write_text("\n".join(lines), encoding="utf-8")
+
+
+def avisar_fim(cfg, op_id, results) -> str:
+    """O aviso de fim de voo (orchestrator/aviso.py). Carregado pelo caminho do arquivo, para valer
+    tanto rodando o script quanto importado pelos testes; se faltar, o voo segue sem aviso."""
+    arq = Path(__file__).with_name("aviso.py")
+    if not arq.exists():                         # instalação sem canal de aviso (o kit, por exemplo)
+        return "sem aviso configurado"
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("e9_aviso", arq)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod.avisar(cfg, op_id, results)
+    except Exception as e:                       # noqa: BLE001 — aviso nunca derruba o voo
+        return f"falhou: {type(e).__name__}"
 
 
 def _min(ms):
@@ -752,6 +833,11 @@ def main():
 
     # ── LIVE ──────────────────────────────────────────────────────────────
     results = {"op": op_id, "branch": cfg["branch"], "started_at": datetime.now().isoformat()}
+    # v0.5.1 — o re-voo não apaga o voo anterior: o resumo dele fica em `voos_anteriores`, e o
+    # placar mede o verde DE PRIMEIRA. Até aqui o metrics.json novo sobrescrevia o velho.
+    results["voos_anteriores"] = voos_anteriores(op_dir)
+    if cfg.get("treino"):
+        results["treino"] = True
     ok, out = setup_worktree(cfg)
     if not ok:
         log("ABORT", f"worktree falhou:\n{out}")
@@ -760,11 +846,30 @@ def main():
     brief_file.write_text(brief, encoding="utf-8")
 
     t0 = time.monotonic()
+    tetos = {"operador": cfg["operator"].get("timeout_s", OPERATOR_TIMEOUT_S)}
+    for nome in ("base", "aceite_base", "gate", "aceite_entrega"):
+        tetos[nome] = cfg["overwatch"].get("timeout_s", OVERWATCH_TIMEOUT_S)
 
-    def finish(status):
+    def fase(nome):
+        """v0.5 — marca o começo de uma etapa, com o teto dela, em `fases.json` (o TOC lê para o
+        cronômetro) e no metrics.json (o AAR mostra quanto cada etapa levou)."""
+        agora = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+        results.setdefault("fases", []).append({"fase": nome, "inicio": agora, "teto_s": tetos.get(nome)})
+        try:
+            (op_dir / "fases.json").write_text(json.dumps(results["fases"]), encoding="utf-8")
+        except OSError:
+            pass
+
+    fase("preparo")                      # zera o fases.json de um voo anterior desta mesma op
+
+    def finish(rc, status):
+        fase("fim")
+        results["rc"] = rc                # v0.4.2 — o TOC lê o código, não adivinha pelo texto
         results["status"] = status
         results["finished_at"] = datetime.now().isoformat()
         results["wall_clock_s"] = round(time.monotonic() - t0, 1)
+        results["aviso"] = avisar_fim(cfg, op_id, results)    # v0.5 — opcional: orchestrator/aviso.py
+        log("AVISO", results["aviso"])
         write_aar(op_dir, op_id, results)
 
     # v0.3 — linha de base: o gate roda na worktree recém-cortada, ANTES do operador. Na Op
@@ -777,17 +882,19 @@ def main():
                   if ln.strip() and ln[3:].strip() not in cfg.get("worktree_link", [])]
         if rc != 0 or sobras:
             results["committed"] = False
-            finish(f"ABORT — worktree não está limpa antes do voo: {sobras[:10] or sujo[:300]}")
+            finish(8, f"ABORT — worktree não está limpa antes do voo: {sobras[:10] or sujo[:300]}")
             log("SITREP", "WORKTREE SUJA — a linha de base não seria o main. Abort antes do operador.")
             return 8
         log("OWX", "linha de base: o gate na worktree recém-cortada, antes do operador")
+        fase("base")
         base_ok, base_out = run_overwatch(cfg, op_dir / "baseline.log", chave="baseline_cmd")
         results["baseline_pass"] = base_ok
         results["baseline_gate"] = gate_summary(base_out)
+        anexar_tempo_do_portao(brief_file, cfg, results["fases"][-1]["inicio"])
         if not base_ok:
             results["committed"] = False
             results["overwatch_tail"] = base_out.strip()[-1500:]
-            finish("ABORT — linha de base VERMELHA: o gate já falha no main, antes do operador "
+            finish(7, "ABORT — linha de base VERMELHA: o gate já falha no main, antes do operador "
                    "(nada foi despachado)")
             log("SITREP", "LINHA DE BASE VERMELHA — operador não despachado. AAR gravado.")
             return 7
@@ -800,10 +907,11 @@ def main():
         if not ok:
             results["committed"] = False
             info["veredito"] = msg
-            finish(f"ABORT — aceite não instalado: {msg}")
+            finish(RC_ACEITE_BASE, f"ABORT — aceite não instalado: {msg}")
             log("SITREP", f"ACEITE NÃO INSTALADO — {msg}")
             return RC_ACEITE_BASE
         log("ACT", msg)
+        fase("aceite_base")
         rc_a, c, _ = rodar_aceite(cfg, op_dir / "aceite-base.log")
         info.update({"base_rc": rc_a, "base": c,
                      "coletados": c.get("passed", 0) + c.get("failed", 0) + c.get("errors", 0)})
@@ -811,11 +919,12 @@ def main():
         if motivo:
             results["committed"] = False
             info["veredito"] = motivo
-            finish(f"ABORT — {motivo} (nada foi despachado)")
+            finish(RC_ACEITE_BASE, f"ABORT — {motivo} (nada foi despachado)")
             log("SITREP", f"ACEITE NÃO FALHA NA BASE — {motivo}")
             return RC_ACEITE_BASE
         log("ACT", f"aceite falha na base como devia: {c}")
 
+    fase("operador")
     results["operator_ok"], op_out, results["operator_rc"] = dispatch_operator(
         cfg, brief_file, op_dir / "operator.jsonl")
     results["operator"] = parse_operator_output(op_out)
@@ -828,7 +937,7 @@ def main():
         # sozinho mente; quem diz se o operador trabalhou é o evento `result`.
         results["operator_ok"] = False
         results["committed"] = False
-        finish("ABORT — operador terminou em erro (is_error): "
+        finish(6, "ABORT — operador terminou em erro (is_error): "
                + results["operator"].get("result_text", "")[:300])
         log("SITREP", f"OPERADOR EM ERRO — {results['operator'].get('result_text', '')[:200]}")
         return 6
@@ -836,7 +945,7 @@ def main():
         # Operador que estoura o teto não chega ao gate: o que ele deixou pela metade não é
         # entrega. Branch fica como está, para o Comandante olhar.
         results["committed"] = False
-        finish("ABORT — operador estourou o teto de tempo (TIMEOUT), sem overwatch nem commit")
+        finish(5, "ABORT — operador estourou o teto de tempo (TIMEOUT), sem overwatch nem commit")
         log("SITREP", "OPERADOR EM TIMEOUT — abort. AAR gravado. Sem push.")
         return 5
 
@@ -847,10 +956,11 @@ def main():
             results["committed"] = False
             results["aceite"]["mexidos"] = mexidos
             results["aceite"]["veredito"] = "o operador mexeu no aceite — abort mesmo que o resto esteja verde"
-            finish(f"ABORT — aceite alterado pelo operador: {mexidos}")
+            finish(RC_ACEITE_ENTREGA, f"ABORT — aceite alterado pelo operador: {mexidos}")
             log("SITREP", f"ACEITE MEXIDO — {mexidos}. Branch fica p/ revisão, sem commit.")
             return RC_ACEITE_ENTREGA
 
+    fase("gate")
     results["overwatch_pass"], ow_out = run_overwatch(cfg, op_dir / "overwatch.log")
     results["overwatch_tail"] = ow_out.strip()[-1500:]
     results["gate"] = gate_summary(ow_out)
@@ -861,35 +971,40 @@ def main():
 
     if not results["overwatch_pass"]:
         results["committed"] = False
-        finish("ABORT — overwatch vermelho (branch deixada p/ revisão, sem commit-como-concluído)")
+        finish(3, "ABORT — overwatch vermelho (branch deixada p/ revisão, sem commit-como-concluído)")
         log("SITREP", "OVERWATCH VERMELHO — abort. AAR gravado. Sem push.")
         print(ow_out[-1500:])
         return 3
 
     if aceite:
         a = results["aceite"]
+        fase("aceite_entrega")
         a["entrega_rc"], a["entrega"], _ = rodar_aceite(cfg, op_dir / "aceite-entrega.log")
         motivo = julgar_aceite_entrega(a["entrega_rc"], a["entrega"], a["coletados"])
         if motivo:
             results["committed"] = False
             a["veredito"] = motivo
-            finish(f"ABORT — gate verde, mas {motivo}")
+            finish(RC_ACEITE_ENTREGA, f"ABORT — gate verde, mas {motivo}")
             log("SITREP", f"ACEITE NÃO CUMPRIDO — {motivo}")
             return RC_ACEITE_ENTREGA
         a["veredito"] = f"cumprido: {a['coletados']} teste(s) de aceite passaram, nenhum mexido nem pulado"
 
+    fase("commit")
     results["committed"], commit_out = stage_and_commit(cfg, op_id, aceite)
     if not results["committed"]:
         # Overwatch passou mas o commit não fechou (artefato faltando, etc.) — não maquiar.
-        finish(f"ABORT — overwatch verde, mas commit falhou: {commit_out}")
+        finish(4, f"ABORT — overwatch verde, mas commit falhou: {commit_out}")
         log("SITREP", f"COMMIT NÃO FECHOU — {commit_out}")
         return 4
     rc, sha = git(["rev-parse", "--short", "HEAD"], cwd=cfg["worktree"])
     results["commit_sha"] = sha.strip() if rc == 0 else None
-    finish("OK — overwatch verde, commitado na branch (aguarda revisão do Comandante)")
+    rc, nomes = git(["show", "--name-only", "--format=", "HEAD"], cwd=cfg["worktree"])
+    results["arquivos"] = [n.strip() for n in nomes.splitlines() if n.strip()] if rc == 0 else []
+    finish(0,"OK — overwatch verde, commitado na branch (aguarda revisão do Comandante)")
     sitrep([f"OP {op_id}: VERDE.",
             f"Branch {cfg['branch']} commitada (SEM push).",
-            "AAR + metrics gravados. Aguarda luz verde do Comandante p/ merge/deploy."])
+            "AAR + metrics gravados. Aguarda luz verde do Comandante p/ merge/deploy.",
+            f"No merge: python orchestrator/revisar.py --op ops/{op_dir.name} (--como-veio | --consertado | --descartado)"])
     return 0
 
 

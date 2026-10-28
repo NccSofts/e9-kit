@@ -17,6 +17,7 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
+os.environ["E9_SEM_AVISO"] = "1"    # os voos de teste nunca mandam aviso para o celular
 _spec = importlib.util.spec_from_file_location("e9_run", Path(__file__).with_name("e9_run.py"))
 e9 = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(e9)
@@ -252,6 +253,18 @@ def test_ciclo_verde_commita_com_subject_e_relatorio():
     rc, m, wt = _live(code)
     assert rc == 0, m
     assert m["committed"] and m["commit_sha"]
+    assert m["rc"] == 0 and m["arquivos"] == ["a.py"], (m.get("rc"), m.get("arquivos"))
+    aar = (_ULTIMA_OP / "AAR.md").read_text(encoding="utf-8")
+    assert e9.LEMBRETE_REVISAO in aar and "revisar.py --op ops/" in aar, "v0.5.1: o voo pede a revisão"
+    rv = _revisar()
+    rv.revisar(_ULTIMA_OP, "como_veio", commit_alvo="abc1234")
+    aar = (_ULTIMA_OP / "AAR.md").read_text(encoding="utf-8")
+    assert e9.LEMBRETE_REVISAO not in aar and "## Revisão no alvo" in aar, "a revisão gravada tira o lembrete"
+    assert [f["fase"] for f in m["fases"]] == ["preparo", "base", "operador", "gate", "commit", "fim"]
+    brief = (_ULTIMA_OP / "_brief.txt").read_text(encoding="utf-8")
+    assert "TEMPO DO PORTÃO NESTE VOO" in brief and "timeout: 600000" in brief, "v0.5.1: o tempo medido vai ao briefing"
+    assert m["aviso"] == "sem aviso configurado", m.get("aviso")
+    assert m["fases"][2]["teto_s"] == 30, "o teto do operador vai junto"
     assert m["operator"]["result_text"] == "fiz a.py"
     _, subj = e9.run(["git", "-C", str(wt), "log", "-1", "--format=%s"])
     assert subj.strip() == "chore(e9): op t", subj
@@ -287,6 +300,7 @@ def test_linha_de_base_vermelha_aborta_sem_despachar():
     rc, m, _ = _live(f"from pathlib import Path; Path(r'{marca}').write_text('x')",
                      overwatch="test -f a.py" if os.name == "posix" else 'python -c "import os,sys; sys.exit(0 if os.path.exists(\'a.py\') else 1)"')
     assert rc == 7, m
+    assert m["rc"] == 7, "o metrics.json tem de gravar o código de saída"
     assert m["baseline_pass"] is False and "linha de base" in m["status"].lower()
     assert not marca.exists(), "o operador foi despachado sobre uma base vermelha"
 
@@ -313,6 +327,28 @@ def test_reaproveita_worktree_limpa_da_mesma_branch():
     # e não há nada novo a commitar, então o commit falha com 4 — mas passou pela worktree)
     rc2 = _rerun(_ULTIMA_OP)
     assert rc2 in (0, 4), rc2
+
+
+def test_voo_de_treino_nao_pede_revisao():
+    code = ("from pathlib import Path; Path('a.py').write_text('x = 1\\n'); import json; "
+            "print(json.dumps({'type': 'result', 'is_error': False, 'result': 'ok'}))")
+    rc, m, _ = _live(code, extra={"treino": True})
+    assert rc == 0 and m["treino"] is True
+    assert e9.LEMBRETE_REVISAO not in (_ULTIMA_OP / "AAR.md").read_text(encoding="utf-8")
+
+
+def test_revoo_guarda_o_voo_anterior():
+    """v0.5.1 — o metrics.json do re-voo leva o resumo do voo anterior: o verde de primeira se mede."""
+    code = ("from pathlib import Path; Path('a.py').write_text('x = 1\\n'); "
+            "Path('b.py').write_text('y = 2\\n')")
+    rc, m1, _ = _live(code)                # 1º voo: commit barrado (rc 4)
+    assert rc == 4 and m1["voos_anteriores"] == []
+    _rerun(_ULTIMA_OP)                     # 2º voo: worktree suja (rc 8)
+    m2 = json.loads((_ULTIMA_OP / "metrics.json").read_text(encoding="utf-8"))
+    assert m2["rc"] == 8 and [v["rc"] for v in m2["voos_anteriores"]] == [4]
+    _rerun(_ULTIMA_OP)                     # 3º voo: o histórico acumula
+    m3 = json.loads((_ULTIMA_OP / "metrics.json").read_text(encoding="utf-8"))
+    assert [v["rc"] for v in m3["voos_anteriores"]] == [4, 8]
 
 
 def test_baseline_desligavel_no_op_json():
@@ -360,6 +396,16 @@ def test_relatorio_sem_secao_de_desvios_vira_achado():
     assert any("Desvios da OPORD" in x for x in d)
     assert e9.divergencias(True, {"passed": 10},
                            "Fiz. 10 passed.\n### Desvios da OPORD\n- a OPORD dizia X -> fiz Y") == []
+
+
+def test_timeout_do_portao_e_o_dobro_da_base_dentro_dos_limites():
+    """Numa tarefa real, `timeout: 300000` numa suíte de 6m20s foi para segundo plano sozinho."""
+    cfg = {"operator": {"cmd_template": "BASH_MAX_TIMEOUT_MS=1200000 claude -p x"}}
+    assert e9.timeout_do_portao_ms(cfg, 380) == 760_000      # uma suíte de 6m20s: o dobro
+    assert e9.timeout_do_portao_ms(cfg, 10) == 600_000       # piso de 10 min
+    assert e9.timeout_do_portao_ms(cfg, 900) == 1_200_000    # teto do cmd_template
+    brief = e9.build_brief(_mk_op({}) / "OPORD.md", Path("/nao/existe"))
+    assert "Não passe ao Bash um `timeout` menor que o tempo do portão" in brief
 
 
 def test_briefing_proibe_segundo_plano():
@@ -535,6 +581,9 @@ def test_aceite_vai_ao_briefing_como_so_leitura():
     brief = e9.build_brief(_mk_op({}) / "OPORD.md", Path("/nao/existe"),
                            aceite=["tests/aceite/test_x.py"])
     assert "TESTES DE ACEITE (só leitura)" in brief and "`tests/aceite/test_x.py`" in brief
+    com_wt = e9.build_brief(_mk_op({}) / "OPORD.md", Path("/nao/existe"), {"worktree": "/w/smoke/"},
+                            aceite=["tests/aceite/test_x.py"])
+    assert "`/w/smoke/tests/aceite/test_x.py`" in com_wt, "o caminho vai na worktree, não no alvo"
 
 
 def test_contagem_do_pytest():
@@ -554,6 +603,42 @@ def test_contagem_do_unittest():
     coleta = ("E\nERROR: test_x (unittest.loader._FailedTest.test_x)\nImportError: Failed to import "
               "test module: test_x\nRan 1 test in 0.000s\n\nFAILED (errors=1)\n")
     assert e9.julgar_aceite_base({}, 1, e9.contagem(coleta)), "erro de coleta passou como teste"
+
+
+# --- v0.5: a revisão no alvo — o número que o gate não dá ---------------------------
+
+def _revisar():
+    spec = importlib.util.spec_from_file_location("revisar", Path(__file__).with_name("revisar.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_revisar_grava_o_desfecho_e_preserva_o_aar_escrito_a_mao():
+    rv = _revisar()
+    d = Path(tempfile.mkdtemp())
+    (d / "metrics.json").write_text(json.dumps({"status": "OK", "rc": 0}), encoding="utf-8")
+    (d / "AAR.md").write_text("# AAR\n\n3. Por quê? → análise escrita à mão\n", encoding="utf-8")
+    rv.revisar(d, "como_veio", commit_alvo="abc1234")
+    rv.revisar(d, "consertado", "estreitei o except", "def5678")         # a 2ª troca a seção
+    m = json.loads((d / "metrics.json").read_text(encoding="utf-8"))
+    assert m["revisao"]["desfecho"] == "consertado" and m["revisao"]["commit_alvo"] == "def5678"
+    aar = (d / "AAR.md").read_text(encoding="utf-8")
+    assert "análise escrita à mão" in aar and aar.count("## Revisão no alvo") == 1
+    assert "estreitei o except" in aar and "abc1234" not in aar
+
+
+def test_revisar_recusa_conserto_sem_nota():
+    rv = _revisar()
+    d = Path(tempfile.mkdtemp())
+    (d / "metrics.json").write_text("{}", encoding="utf-8")
+    for desfecho in ("consertado", "descartado", "inventado"):
+        try:
+            rv.revisar(d, desfecho, "")
+            raise AssertionError(f"{desfecho} sem nota devia ser recusado")
+        except ValueError:
+            pass
+    assert rv.main(["--op", str(d), "--consertado", "  "]) == 2
 
 
 # --- v0.4: as travas do alvo — quem redige a OPORD cita cada uma --------------------

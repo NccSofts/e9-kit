@@ -38,6 +38,31 @@ opcionais:
 
 A tarefa de exemplo usa as duas.
 
+## O que mudou na v0.5
+
+- **O tempo do portão vai medido ao agente.** Numa tarefa real o agente pediu `timeout` de 5 min ao
+  Bash para uma suíte de 6m20s. No Claude Code, comando que passa do `timeout` pedido **não é
+  morto**: vai para segundo plano sozinho, e em `claude -p` o aviso de "terminou" nunca chega — o
+  agente encerrou "aguardando". Agora, depois da linha de base, o briefing ganha quanto o portão
+  levou neste voo e o `timeout` a usar (o dobro, entre 10 min e o `BASH_MAX_TIMEOUT_MS`).
+- **Etapas com teto.** O `metrics.json` grava o começo e o teto de cada etapa (linha de base, aceite,
+  agente, verificação, commit), e `fases.json` mostra a etapa em curso a quem quiser acompanhar.
+- **O re-voo não apaga o voo anterior.** O resumo dele fica em `voos_anteriores`: dá para medir o
+  verde de primeira.
+- **O desfecho no alvo** (`orchestrator/revisar.py`): o gate sabe se passou; só quem revisa sabe se
+  entrou como veio. O AAR de voo que deixa algo para mergear termina pedindo:
+
+  ```bash
+  python3 orchestrator/revisar.py --op ops/<tarefa> --como-veio --commit-alvo <sha>
+  python3 orchestrator/revisar.py --op ops/<tarefa> --consertado "o que mudou" --commit-alvo <sha>
+  python3 orchestrator/revisar.py --op ops/<tarefa> --descartado "por quê"
+  ```
+
+  Grava `revisao` no `metrics.json` e troca a seção do AAR sem regerar o resto. Tarefa com
+  `"treino": true` não pede revisão.
+- O `metrics.json` grava também o código de saída (`rc`) e os arquivos do commit.
+- Voo de teste da v0.5: verde, com as oito etapas gravadas e o tempo do portão no briefing.
+
 ## Requisitos
 
 - **Linux ou WSL.** No Windows puro o script roda, mas sem duas proteções: matar o grupo inteiro

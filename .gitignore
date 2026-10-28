@@ -3,6 +3,8 @@ ops/*/operator.jsonl
 ops/*/overwatch.log
 ops/*/baseline.log
 ops/*/_brief.txt
+ops/*/aceite-*.log
+ops/*/fases.json
 __pycache__/
 *.pyc
 .env
