@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-e9_run.py — harness de execução de UMA operação do E-9 (caminho leve, v0.3).
+e9_run.py — harness de execução de UMA operação do E-9 (caminho leve, v0.4).
 
 v0.2 (2026-10-24): o operador não trava mais sem TTY (stdin=DEVNULL + teto de tempo que
 mata o grupo de processos); a mensagem de commit vem do op.json (`commit.subject`); a saída
@@ -11,6 +11,15 @@ v0.3 (2026-10-25): linha de base — o gate roda na worktree recém-cortada ANTE
 vermelho herdado do `main` (ou worktree suja) aborta sem despachar; o AAR põe o gate do E-9 ao
 lado do relatório do operador e marca onde os dois divergem; o briefing proíbe teste em
 paralelo no banco único e "verde" sem a saída que prove.
+
+v0.4 (2026-10-28): o pedido vira contrato executável, em duas peças. (1) ACEITE — testes escritos
+pelo E-9 no recon (`ops/<op>/aceite/`), copiados para a worktree depois da linha de base: têm de
+FALHAR antes do operador (rc 9 se já passam ou nem rodam), ficam intocados por ele (sha256) e têm
+de PASSAR inteiros, sem skip, depois (rc 10); entram no commit como regressão. Responde ao ponto
+cego medido em voos reais: gate verde com o desenho errado. (2) TRAVAS DO ALVO — `alvos/<alvo>.md`
+com os invariantes do repo-alvo, numerados; o `load_op` recusa OPORD que não cite cada um numa
+seção `## Travas do alvo`, e o arquivo vai inteiro ao briefing. Responde à ordem que
+contradizia invariantes do repo que quem a escreveu esqueceu.
 
 Executa o ciclo da doutrina para um OPORD:
   rehearsal (--dry-run) → worktree → operador → overwatch (gate) → AAR → commit (SEM push)
@@ -30,9 +39,11 @@ o comando real vem do op.json (operator.cmd_template).
 """
 import argparse
 import fnmatch
+import hashlib
 import json
 import os
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -54,6 +65,8 @@ FORBIDDEN_ADD_FLAGS = {"-A", "--all", "."}                       # ROE §9 (add 
 # ROE §3 — o que conta como produção é de cada um: o op.json declara em `prod_markers`
 # (trechos que, se aparecerem no target_repo, barram a op). Estes valem sempre, por cima.
 PROD_MARKERS: tuple[str, ...] = ()
+ALVOS_DIR = Path(__file__).resolve().parent.parent / "alvos"     # v0.4 — travas por repo-alvo
+_TRAVA_ID = re.compile(r"\[([A-Z][A-Z0-9]*-\d+)\]")
 
 
 def log(tag, msg):
@@ -68,7 +81,7 @@ def sitrep(lines):
     print(bar)
 
 
-def load_op(op_dir: Path):
+def load_op(op_dir: Path, alvos_dir: Path | None = None):
     """Lê op.json + confirma que OPORD.md existe. Retorna (cfg, opord_path)."""
     cfg_path = op_dir / "op.json"
     opord = op_dir / "OPORD.md"
@@ -98,10 +111,50 @@ def load_op(op_dir: Path):
     for danger in ("git push", "git merge", "git reset", "git rebase"):  # ROE §2/§10
         if danger in blob:
             sys.exit(f"ABORT (ROE §2/§10): op.json contém '{danger}' — proibido no harness.")
+    if cfg.get("aceite") is not None:                                   # v0.4
+        if not (cfg["aceite"] or {}).get("cmd"):
+            sys.exit("ABORT (aceite): `aceite.cmd` ausente — sem comando não há o que provar.")
+        if not aceite_files(op_dir):
+            sys.exit(f"ABORT (aceite): nenhum arquivo em {op_dir / 'aceite'} — o aceite é a pasta.")
+    if cfg.get("alvo"):                                                 # v0.4
+        faltam = travas_nao_citadas(opord, alvo_path(cfg, alvos_dir))
+        if faltam:
+            sys.exit(f"ABORT (travas do alvo): a OPORD não cita {faltam} na seção "
+                     "`## Travas do alvo` — cada trava leva \"aplica: como\" ou \"não se aplica: porquê\".")
     return cfg, opord
 
 
-def build_brief(opord: Path, roe: Path, cfg: dict | None = None) -> str:
+def aceite_files(op_dir: Path) -> list[tuple[str, Path]]:
+    """Os testes de aceite da op (v0.4): tudo sob `ops/<op>/aceite/`, com o caminho relativo
+    que terão na worktree. Cache de Python não é aceite."""
+    raiz = Path(op_dir) / "aceite"
+    if not raiz.is_dir():
+        return []
+    return sorted((p.relative_to(raiz).as_posix(), p) for p in raiz.rglob("*")
+                  if p.is_file() and "__pycache__" not in p.parts and p.suffix != ".pyc")
+
+
+def alvo_path(cfg, alvos_dir: Path | None = None) -> Path:
+    path = Path(alvos_dir or ALVOS_DIR) / f"{cfg['alvo']}.md"
+    if not path.exists():
+        sys.exit(f"ABORT (travas do alvo): {path} não existe — alvo declarado sem as travas dele.")
+    return path
+
+
+def travas_nao_citadas(opord: Path, alvo: Path) -> list[str]:
+    """IDs de trava do alvo que a seção `## Travas do alvo` da OPORD não cita (v0.4). Numa tarefa
+    real a ordem proibia justo o que duas travas do repo exigiam, e ninguém notou ao escrever: a
+    trava não é do operador, é de quem redige a OPORD."""
+    ids = list(dict.fromkeys(_TRAVA_ID.findall(alvo.read_text(encoding="utf-8"))))
+    texto = opord.read_text(encoding="utf-8")
+    m = re.search(r"^#{2,4}\s*Travas do alvo\s*$(.*?)(?=^#{1,4}\s|\Z)", texto,
+                  re.IGNORECASE | re.MULTILINE | re.DOTALL)
+    secao = m.group(1) if m else ""
+    return [i for i in ids if not re.search(rf"\b{re.escape(i)}\b", secao)]
+
+
+def build_brief(opord: Path, roe: Path, cfg: dict | None = None, *,
+                alvo: Path | None = None, aceite: list[str] | None = None) -> str:
     """Briefing do operador = preâmbulo de comando + OPORD + ROE Card."""
     preamble = (
         "# BRIEFING DO OPERADOR (E-9)\n\n"
@@ -137,6 +190,19 @@ def build_brief(opord: Path, roe: Path, cfg: dict | None = None) -> str:
         + "=" * 60 + "\n# OPORD\n\n" + opord.read_text(encoding="utf-8"))
     if roe.exists():
         preamble += "\n\n" + "=" * 60 + "\n# ROE (regras permanentes)\n\n" + roe.read_text(encoding="utf-8")
+    if alvo is not None:
+        preamble += ("\n\n" + "=" * 60 + "\n# TRAVAS DO ALVO (invariantes deste repositório)\n\n"
+                     "Toda mudança neste repo respeita estas travas, mesmo as que a OPORD não "
+                     "repete. Se uma ordem da OPORD contradiz uma trava: HOLD + SITREP, e declare "
+                     "nos desvios.\n\n" + alvo.read_text(encoding="utf-8"))
+    if aceite:
+        preamble += ("\n\n" + "=" * 60 + "\n# TESTES DE ACEITE (só leitura)\n\n"
+                     "O E-9 já pôs estes arquivos na worktree, e eles falham hoje: são a prova de "
+                     "que o pedido foi cumprido. Faça-os passar sem editá-los, sem apagá-los e sem "
+                     "pulá-los (nada de skip, xfail ou conftest que os desligue): o E-9 confere o "
+                     "sha256 de cada um, e mexer é abort mesmo com tudo verde. Achou um teste "
+                     "errado? HOLD + SITREP, e declare nos desvios.\n\n"
+                     + "\n".join(f"- `{rel}`" for rel in aceite) + "\n")
     liberados = comandos_liberados(cfg) if cfg else []
     if liberados:
         preamble += ("\n\n" + "=" * 60 + "\n# COMANDOS BASH LIBERADOS (exatamente nestas formas)\n\n"
@@ -368,6 +434,99 @@ def run_overwatch(cfg, log_file: Path | None = None, *, chave: str = "test_cmd")
     return rc == 0, out
 
 
+# --- v0.4: o aceite — a pós-condição escrita antes do voo, por quem não implementa ---------
+RC_ACEITE_BASE = 9       # o aceite não falha na base (já passa, ou nem roda como teste)
+RC_ACEITE_ENTREGA = 10   # o aceite foi mexido, ou não passou inteiro depois do operador
+_PULADOS = ("skipped", "xfailed", "xpassed", "deselected")
+
+
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def contagem(text: str) -> dict:
+    """A contagem final do runner de testes: o resumo do pytest (`2 failed, 3 passed, 1 skipped`)
+    ou, sem ele, o do unittest (`Ran 3 tests` + `FAILED (failures=1, errors=2)`). Módulo de teste
+    que nem importa marca `erro_de_coleta` — no unittest ele aparece como um teste com erro."""
+    c = {}
+    for chave in ("passed", "failed", "error", "errors", *_PULADOS):
+        achados = re.findall(rf"(\d+) {chave}\b", text)
+        if achados:
+            c[chave] = int(achados[-1])
+    if "error" in c:
+        c["errors"] = c.pop("error") + c.get("errors", 0)
+    ran = re.findall(r"^Ran (\d+) tests? in", text, re.MULTILINE)
+    if not c and ran:
+        partes = dict(re.findall(r"(\w[\w ]*?)=(\d+)", (re.findall(
+            r"^(?:FAILED|OK) \(([^)]*)\)", text, re.MULTILINE) or [""])[-1]))
+        n = {k: int(partes.get(k, 0)) for k in
+             ("failures", "errors", "skipped", "expected failures", "unexpected successes")}
+        c = {"passed": int(ran[-1]) - sum(n.values()), "failed": n["failures"],
+             "errors": n["errors"], "skipped": n["skipped"], "xfailed": n["expected failures"],
+             "xpassed": n["unexpected successes"]}
+        c = {k: v for k, v in c.items() if v}
+    if "Failed to import test module" in text or re.search(r"^ERROR collecting", text, re.MULTILINE):
+        c["erro_de_coleta"] = True
+    return c
+
+
+def instalar_aceite(cfg, op_dir: Path) -> tuple[bool, str, dict]:
+    """Copia o aceite para a worktree e guarda o sha256 de cada arquivo. O aceite só CRIA
+    arquivo: sobrescrever um teste que o alvo já tem mudaria o que a linha de base provou."""
+    wt, hashes = Path(cfg["worktree"]), {}
+    for rel, src in aceite_files(op_dir):
+        if rel.startswith("/") or ".." in Path(rel).parts:
+            return False, f"caminho de aceite inseguro: {rel}", {}
+        dst, h = wt / rel, _sha256(src)
+        if dst.exists() and _sha256(dst) != h:       # re-voo: o mesmo arquivo, já commitado, serve
+            return False, f"{rel} já existe no alvo com outro conteúdo — o aceite só cria arquivo novo", {}
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(src, dst)
+        hashes[rel] = h
+    return True, f"{len(hashes)} arquivo(s) de aceite na worktree", {"arquivos": hashes}
+
+
+def rodar_aceite(cfg, log_file: Path | None = None) -> tuple[int, dict, str]:
+    cmd = _fmt(cfg["aceite"]["cmd"], cfg)
+    log("ACT", f"aceite: {cmd}")
+    rc, out = run(cmd, cwd=cfg["worktree"],
+                  timeout=cfg["overwatch"].get("timeout_s", OVERWATCH_TIMEOUT_S), log_file=log_file)
+    return rc, contagem(out), out
+
+
+def julgar_aceite_base(cfg, rc: int, c: dict) -> str | None:
+    """Antes do operador o aceite tem de FALHAR, e falhar como teste. Devolve o motivo do abort,
+    ou None. rc 0 = já passa, não prova nada novo; rc 2/4/5 do pytest = erro de coleta, de uso
+    ou nenhum teste — um ImportError não é a prova de nada (por isso o import vai DENTRO da função)."""
+    if rc == 0:
+        return "o aceite já PASSA antes do operador — não prova nada que a op vá fazer"
+    esperado = (cfg.get("aceite") or {}).get("base_rc", 1)
+    if rc != esperado or c.get("erro_de_coleta") or not (c.get("failed", 0) + c.get("errors", 0)):
+        return (f"o aceite não rodou como teste na base (rc {rc}, esperado {esperado} com falhas; "
+                f"contagem {c}): erro de coleta ou de comando não é aceite")
+    return None
+
+
+def aceite_mexido(cfg, hashes: dict) -> list[str]:
+    """Arquivos de aceite que mudaram ou sumiram desde a base."""
+    wt = Path(cfg["worktree"])
+    return [rel for rel, h in hashes.items()
+            if not (wt / rel).exists() or _sha256(wt / rel) != h]
+
+
+def julgar_aceite_entrega(rc: int, c: dict, coletados: int) -> str | None:
+    """Depois do operador: tudo passa, a mesma quantidade da base, nada pulado. Um skip posto
+    por fora (conftest, marcador global) passaria no rc e não na contagem."""
+    pulados = {k: c[k] for k in _PULADOS if c.get(k)}
+    if rc != 0 or c.get("failed") or c.get("errors"):
+        return f"o aceite não passou depois do operador (rc {rc}, contagem {c})"
+    if pulados:
+        return f"o aceite passou com testes pulados ({pulados}) — pulado não é cumprido"
+    if c.get("passed") != coletados:
+        return f"o aceite rodou {c.get('passed')} teste(s), e a base coletou {coletados}"
+    return None
+
+
 COMMIT_PREFIXES = ("feat", "fix", "refactor", "chore", "docs", "test")   # conventional commits
 
 
@@ -433,8 +592,10 @@ def commit_message(cfg, op_id, artifacts):
     return subject + "\n\n" + (body + "\n\n" if body else "") + trailer
 
 
-def stage_and_commit(cfg, op_id):
-    """git add SELETIVO (expected_artifacts) + commit. NUNCA -A, NUNCA push."""
+def stage_and_commit(cfg, op_id, aceite=()):
+    """git add SELETIVO (expected_artifacts) + commit. NUNCA -A, NUNCA push.
+    v0.4: os arquivos de aceite entram também — fazem parte da árvore testada, e o contrato
+    fica no alvo como teste de regressão."""
     wt = cfg["worktree"]
     arts = cfg.get("expected_artifacts", [])
     opt = cfg.get("optional_artifacts", [])
@@ -459,6 +620,7 @@ def stage_and_commit(cfg, op_id):
         return False, f"padrão(ões) OBRIGATÓRIO(s) sem match na worktree: {missing}"
     for pat in opt:                                    # opcionais (meio do operador): só se vierem
         resolved.extend(match(pat))
+    resolved.extend(rel for rel in aceite if rel in changed)   # já commitado num re-voo: não muda
     resolved = sorted(set(resolved))
     # v0.2 — o overwatch testou a árvore INTEIRA da worktree; se o operador mexeu num
     # arquivo que nenhum padrão cobre, o commit levaria outra árvore, não a testada, e a
@@ -524,6 +686,20 @@ def write_aar(op_dir: Path, op_id, results: dict):
         lines += [f"- ⚠️ **Divergência:** {d}." for d in diverg] or [
             "- O relatório do operador não contradiz o gate."]
         lines.append("")
+    a = results.get("aceite")
+    if a:
+        lines += ["## Aceite × entrega (v0.4)", "",
+                  f"- Arquivos: {', '.join(f'`{r}`' for r in a.get('arquivos', {}))}.",
+                  f"- Na base (antes do operador): rc {a.get('base_rc')} · {a.get('base')} · "
+                  f"{a.get('coletados')} coletado(s)."]
+        if a.get("mexidos"):
+            lines.append(f"- ⚠️ **Mexidos pelo operador:** {', '.join(a['mexidos'])}.")
+        elif "entrega" in a:
+            lines.append(f"- Depois do operador: rc {a.get('entrega_rc')} · {a.get('entrega')} · "
+                         "hashes intactos.")
+        if a.get("veredito"):
+            lines.append(f"- **{a['veredito']}**")
+        lines.append("")
     if results.get("overwatch_tail"):
         lines += ["## Overwatch (fim da saída)", "", "```", results["overwatch_tail"], "```", ""]
     lines += ["## Arquivos brutos (ficam na máquina, fora do git)",
@@ -550,7 +726,9 @@ def main():
     roe = e9_root / "doctrine" / "ROE-card.md"
     cfg, opord = load_op(op_dir)
     op_id = cfg.get("op", op_dir.name)
-    brief = build_brief(opord, roe, cfg)
+    alvo = alvo_path(cfg) if cfg.get("alvo") else None
+    aceite = [rel for rel, _ in aceite_files(op_dir)] if cfg.get("aceite") else []
+    brief = build_brief(opord, roe, cfg, alvo=alvo, aceite=aceite)
 
     sitrep([f"E-9 · OP {op_id} · modo {'ENSAIO (dry-run)' if dry else 'LIVE'}",
             f"AO     : {cfg['target_repo']} @ {cfg['branch']}",
@@ -562,7 +740,10 @@ def main():
             f"Tetos   : operador {cfg['operator'].get('timeout_s', OPERATOR_TIMEOUT_S)}s · "
             f"overwatch {cfg['overwatch'].get('timeout_s', OVERWATCH_TIMEOUT_S)}s",
             f"Base    : {'desligada' if cfg['overwatch'].get('baseline') is False else (cfg['overwatch'].get('baseline_cmd') or 'o mesmo gate')}",
-            f"Briefing: {len(brief)} chars (OPORD + ROE)"])
+            f"Aceite  : {', '.join(aceite) + ' · ' + cfg['aceite']['cmd'] if aceite else '—'}",
+            f"Travas  : {alvo.name + ' (todas citadas na OPORD)' if alvo else '—'}",
+            f"Briefing: {len(brief)} chars (OPORD + ROE" + (" + travas" if alvo else "")
+            + (" + aceite" if aceite else "") + ")"])
 
     if dry:
         log("ENSAIO", "validação OK. Plano: worktree → linha de base → operador → overwatch → commit(branch) → AAR.")
@@ -611,6 +792,30 @@ def main():
             log("SITREP", "LINHA DE BASE VERMELHA — operador não despachado. AAR gravado.")
             return 7
 
+    # v0.4 — o aceite entra DEPOIS da base (o `main` é verde sem ele) e tem de falhar ANTES do
+    # operador: teste que já passa, ou que nem roda, não prova o que a op vai fazer.
+    if aceite:
+        ok, msg, info = instalar_aceite(cfg, op_dir)
+        results["aceite"] = info
+        if not ok:
+            results["committed"] = False
+            info["veredito"] = msg
+            finish(f"ABORT — aceite não instalado: {msg}")
+            log("SITREP", f"ACEITE NÃO INSTALADO — {msg}")
+            return RC_ACEITE_BASE
+        log("ACT", msg)
+        rc_a, c, _ = rodar_aceite(cfg, op_dir / "aceite-base.log")
+        info.update({"base_rc": rc_a, "base": c,
+                     "coletados": c.get("passed", 0) + c.get("failed", 0) + c.get("errors", 0)})
+        motivo = julgar_aceite_base(cfg, rc_a, c)
+        if motivo:
+            results["committed"] = False
+            info["veredito"] = motivo
+            finish(f"ABORT — {motivo} (nada foi despachado)")
+            log("SITREP", f"ACEITE NÃO FALHA NA BASE — {motivo}")
+            return RC_ACEITE_BASE
+        log("ACT", f"aceite falha na base como devia: {c}")
+
     results["operator_ok"], op_out, results["operator_rc"] = dispatch_operator(
         cfg, brief_file, op_dir / "operator.jsonl")
     results["operator"] = parse_operator_output(op_out)
@@ -635,6 +840,17 @@ def main():
         log("SITREP", "OPERADOR EM TIMEOUT — abort. AAR gravado. Sem push.")
         return 5
 
+    if aceite:
+        mexidos = aceite_mexido(cfg, results["aceite"]["arquivos"])
+        if mexidos:
+            # Abort antes do gate: com a prova alterada, o verde do gate não diria nada.
+            results["committed"] = False
+            results["aceite"]["mexidos"] = mexidos
+            results["aceite"]["veredito"] = "o operador mexeu no aceite — abort mesmo que o resto esteja verde"
+            finish(f"ABORT — aceite alterado pelo operador: {mexidos}")
+            log("SITREP", f"ACEITE MEXIDO — {mexidos}. Branch fica p/ revisão, sem commit.")
+            return RC_ACEITE_ENTREGA
+
     results["overwatch_pass"], ow_out = run_overwatch(cfg, op_dir / "overwatch.log")
     results["overwatch_tail"] = ow_out.strip()[-1500:]
     results["gate"] = gate_summary(ow_out)
@@ -650,7 +866,19 @@ def main():
         print(ow_out[-1500:])
         return 3
 
-    results["committed"], commit_out = stage_and_commit(cfg, op_id)
+    if aceite:
+        a = results["aceite"]
+        a["entrega_rc"], a["entrega"], _ = rodar_aceite(cfg, op_dir / "aceite-entrega.log")
+        motivo = julgar_aceite_entrega(a["entrega_rc"], a["entrega"], a["coletados"])
+        if motivo:
+            results["committed"] = False
+            a["veredito"] = motivo
+            finish(f"ABORT — gate verde, mas {motivo}")
+            log("SITREP", f"ACEITE NÃO CUMPRIDO — {motivo}")
+            return RC_ACEITE_ENTREGA
+        a["veredito"] = f"cumprido: {a['coletados']} teste(s) de aceite passaram, nenhum mexido nem pulado"
+
+    results["committed"], commit_out = stage_and_commit(cfg, op_id, aceite)
     if not results["committed"]:
         # Overwatch passou mas o commit não fechou (artefato faltando, etc.) — não maquiar.
         finish(f"ABORT — overwatch verde, mas commit falhou: {commit_out}")

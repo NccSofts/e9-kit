@@ -207,8 +207,9 @@ def test_aar_carrega_relatorio_do_operador():
 
 # --- v0.2: rc=0 não basta — is_error do `result` derruba o operador -----------
 
-def _live(fake_operator_py: str, overwatch="true"):
-    """Roda o main() em --live contra um repo git descartável, com um operador falso."""
+def _live(fake_operator_py: str, overwatch="true", extra=None, aceite=None):
+    """Roda o main() em --live contra um repo git descartável, com um operador falso.
+    `aceite` = {caminho relativo: conteúdo} vira a pasta `aceite/` da op (v0.4)."""
     base = Path(tempfile.mkdtemp())
     repo, wt = base / "repo", base / "wt"
     e9.run(["git", "init", "-q", "-b", "main", str(repo)])
@@ -218,7 +219,10 @@ def _live(fake_operator_py: str, overwatch="true"):
     fake.write_text(fake_operator_py, encoding="utf-8")
     op = _mk_op({"target_repo": str(repo), "worktree": str(wt), "expected_artifacts": ["a.py"],
                  "operator": {"cmd_template": f'"{sys.executable}" "{fake}"', "timeout_s": 30},
-                 "overwatch": {"test_cmd": overwatch}})
+                 "overwatch": {"test_cmd": overwatch}, **(extra or {})})
+    for rel, conteudo in (aceite or {}).items():
+        (op / "aceite" / rel).parent.mkdir(parents=True, exist_ok=True)
+        (op / "aceite" / rel).write_text(conteudo, encoding="utf-8")
     global _ULTIMA_OP
     _ULTIMA_OP = op
     argv = sys.argv
@@ -459,6 +463,150 @@ def test_baseline_cmd_proprio_roda_na_base_e_o_gate_novo_no_fim():
     assert _rerun(op) == 0
     m = json.loads((op / "metrics.json").read_text(encoding="utf-8"))
     assert m["baseline_pass"] is True and m["overwatch_pass"] is True
+
+
+# --- v0.4: o aceite — falha antes, intocado, passa inteiro depois -------------------
+
+# Um "pytest" de mentira: o aceite exige que a.py exista. `pular.flag` simula um skip posto por fora.
+CHECK_ACEITE = ("import sys\nfrom pathlib import Path\n"
+                "if Path('pular.flag').exists():\n    print('1 skipped in 0.1s'); sys.exit(0)\n"
+                "if Path('a.py').exists():\n    print('1 passed in 0.1s'); sys.exit(0)\n"
+                "print('FAILED check_aceite.py::test_a\\n1 failed in 0.1s'); sys.exit(1)\n")
+ACEITE_CMD = {"aceite": {"cmd": f'"{sys.executable}" tests_aceite/check_aceite.py'}}
+OPERADOR_CUMPRE = ("from pathlib import Path; Path('a.py').write_text('x = 1\\n'); import json; "
+                   "print(json.dumps({'type': 'result', 'is_error': False, "
+                   "'result': 'fiz\\n## Desvios da OPORD\\nnenhum'}))")
+
+
+def _aceite(conteudo=CHECK_ACEITE):
+    return {"tests_aceite/check_aceite.py": conteudo}
+
+
+def test_aceite_cumprido_entra_no_commit():
+    rc, m, wt = _live(OPERADOR_CUMPRE, extra=ACEITE_CMD, aceite=_aceite())
+    assert rc == 0, m
+    a = m["aceite"]
+    assert a["base_rc"] == 1 and a["coletados"] == 1 and a["entrega_rc"] == 0, a
+    assert "cumprido" in a["veredito"]
+    _, nomes = e9.run(["git", "-C", str(wt), "show", "--name-only", "--format=", "HEAD"])
+    assert "tests_aceite/check_aceite.py" in nomes and "a.py" in nomes, nomes
+    assert "Aceite × entrega" in (_ULTIMA_OP / "AAR.md").read_text(encoding="utf-8")
+
+
+def test_aceite_que_ja_passa_aborta_sem_despachar():
+    marca = Path(tempfile.mkdtemp()) / "operador_rodou"
+    rc, m, _ = _live(f"from pathlib import Path; Path(r'{marca}').write_text('x')", extra=ACEITE_CMD,
+                     aceite=_aceite("print('1 passed in 0.1s')\n"))
+    assert rc == e9.RC_ACEITE_BASE, m
+    assert "já PASSA" in m["status"] and not marca.exists()
+
+
+def test_aceite_com_erro_de_coleta_aborta():
+    """rc 2 do pytest (ImportError na coleta) não é um teste falhando: não prova nada."""
+    rc, m, _ = _live(OPERADOR_CUMPRE, extra=ACEITE_CMD,
+                     aceite=_aceite("import sys; print('1 error in 0.1s'); sys.exit(2)\n"))
+    assert rc == e9.RC_ACEITE_BASE, m
+    assert "não rodou como teste" in m["status"]
+
+
+def test_aceite_mexido_pelo_operador_aborta_mesmo_verde():
+    code = ("from pathlib import Path; Path('a.py').write_text('x = 1\\n'); "
+            "Path('tests_aceite/check_aceite.py').write_text('print(\"1 passed\")\\n')")
+    rc, m, _ = _live(code, extra=ACEITE_CMD, aceite=_aceite())
+    assert rc == e9.RC_ACEITE_ENTREGA, m
+    assert m["aceite"]["mexidos"] == ["tests_aceite/check_aceite.py"]
+    assert "overwatch_pass" not in m, "com a prova alterada não devia ter chegado ao gate"
+
+
+def test_aceite_pulado_nao_e_cumprido():
+    code = ("from pathlib import Path; Path('a.py').write_text('x = 1\\n'); "
+            "Path('pular.flag').write_text('')")
+    rc, m, _ = _live(code, extra=ACEITE_CMD, aceite=_aceite())
+    assert rc == e9.RC_ACEITE_ENTREGA, m
+    assert "pulados" in m["status"] and m["committed"] is False
+
+
+def test_aceite_sem_pasta_barrado():
+    with blocks():
+        e9.load_op(_mk_op(ACEITE_CMD))
+
+
+def test_aceite_vai_ao_briefing_como_so_leitura():
+    brief = e9.build_brief(_mk_op({}) / "OPORD.md", Path("/nao/existe"),
+                           aceite=["tests/aceite/test_x.py"])
+    assert "TESTES DE ACEITE (só leitura)" in brief and "`tests/aceite/test_x.py`" in brief
+
+
+def test_contagem_do_pytest():
+    assert e9.contagem("2 failed, 3 passed, 1 skipped, 1 error in 2s") == {
+        "passed": 3, "failed": 2, "skipped": 1, "errors": 1}
+    assert e9.julgar_aceite_entrega(0, {"passed": 2}, 3)              # menos que a base coletou
+    assert e9.julgar_aceite_entrega(0, {"passed": 3}, 3) is None
+
+
+def test_contagem_do_unittest():
+    """No unittest o import dentro da função vira erro (E), não falha (F): na base conta."""
+    base = "EEE\n" + "=" * 20 + "\nERROR: test_a\n" + "-" * 20 + "\nRan 3 tests in 0.001s\n\nFAILED (errors=3)\n"
+    assert e9.contagem(base) == {"errors": 3}
+    assert e9.julgar_aceite_base({}, 1, e9.contagem(base)) is None
+    assert e9.contagem("...\nRan 3 tests in 0.001s\n\nOK\n") == {"passed": 3}
+    assert e9.contagem("Ran 3 tests in 0.1s\n\nOK (skipped=1)\n") == {"passed": 2, "skipped": 1}
+    coleta = ("E\nERROR: test_x (unittest.loader._FailedTest.test_x)\nImportError: Failed to import "
+              "test module: test_x\nRan 1 test in 0.000s\n\nFAILED (errors=1)\n")
+    assert e9.julgar_aceite_base({}, 1, e9.contagem(coleta)), "erro de coleta passou como teste"
+
+
+# --- v0.4: as travas do alvo — quem redige a OPORD cita cada uma --------------------
+
+def _alvo(travas="- **[XX-01]** uma.\n- **[XX-02]** outra.\n"):
+    d = Path(tempfile.mkdtemp())
+    (d / "teste.md").write_text(travas, encoding="utf-8")
+    return d
+
+
+def _op_com_opord(texto):
+    op = _mk_op({"alvo": "teste"})
+    (op / "OPORD.md").write_text(texto, encoding="utf-8")
+    return op
+
+
+def test_opord_sem_uma_trava_citada_barrada():
+    op = _op_com_opord("# OPORD\n## Travas do alvo\n- XX-01: aplica, como.\n## 1. SITUATION\n")
+    with blocks():
+        e9.load_op(op, alvos_dir=_alvo())
+
+
+def test_trava_citada_fora_da_secao_nao_conta():
+    op = _op_com_opord("# OPORD\n## Travas do alvo\n- [XX-01] aplica.\n## 5. COMMAND\nXX-02 aqui não vale\n")
+    with blocks():
+        e9.load_op(op, alvos_dir=_alvo())
+
+
+def test_alvo_inexistente_barrado():
+    op = _op_com_opord("## Travas do alvo\n- XX-01\n")
+    with blocks():
+        e9.load_op(op, alvos_dir=Path(tempfile.mkdtemp()))
+
+
+def test_opord_com_todas_as_travas_carrega_e_vai_ao_briefing():
+    alvos = _alvo()
+    op = _op_com_opord("# OPORD\n## Travas do alvo\n- [XX-01] aplica: assim.\n"
+                       "- [XX-02] não se aplica: a op não cria rota.\n")
+    cfg, opord = e9.load_op(op, alvos_dir=alvos)
+    brief = e9.build_brief(opord, Path("/nao/existe"), cfg, alvo=e9.alvo_path(cfg, alvos))
+    assert "TRAVAS DO ALVO" in brief and "**[XX-02]** outra" in brief
+
+
+def test_travas_do_exemplo_tem_ids_unicos():
+    ids = e9._TRAVA_ID.findall((e9.ALVOS_DIR / "exemplo.md").read_text(encoding="utf-8"))
+    assert ids and len(ids) == len(set(ids)) and all(i.startswith("EX-") for i in ids), ids
+
+
+def test_tarefa_de_exemplo_passa_no_ensaio():
+    """A tarefa do kit usa aceite e travas: o contrato dela tem de carregar como está."""
+    op = Path(__file__).resolve().parent.parent / "ops" / "exemplo-slug"
+    cfg, _ = e9.load_op(op)
+    assert cfg["alvo"] == "exemplo" and e9.aceite_files(op)
 
 
 if __name__ == "__main__":

@@ -17,7 +17,26 @@ que deu errado.
 | **Harness engineering** | regras em código: git sem push/merge, spec validada, só entram os arquivos listados |
 | **Loop engineering** | testes antes e depois do agente, teto de tempo, relatório (`AAR.md`) de todo voo |
 
-O vocabulário militar (OPORD, ROE, AAR, overwatch) está traduzido no fim deste arquivo.
+O vocabulário militar (OPORD, ROE, AAR, overwatch) está traduzido no fim deste arquivo, e
+termo por termo, com o nome de mercado, em `doctrine/GLOSSARIO.md`.
+
+## O que mudou na v0.4
+
+A pergunta que faltava ao harness era *"o pedido foi cumprido?"* — o gate só responde *"nada
+quebrou?"*. Em duas tarefas reais o gate deu verde com o desenho errado, e numa terceira a spec
+contradizia regras do próprio repositório que quem a escreveu esqueceu. Duas peças novas,
+opcionais:
+
+- **Aceite (acceptance tests).** Testes escritos por quem pede, antes do voo, em
+  `ops/<tarefa>/aceite/`. O harness exige que **falhem** antes do agente, que **ninguém os
+  edite** (confere o sha256) e que **passem inteiros, sem skip**, depois. Entram no commit como
+  regressão. É o critério de pronto virando código: Hoare e Meyer, sem a cerimônia.
+- **Travas do alvo (invariants).** `alvos/<repo>.md` lista, numeradas, as regras que toda
+  mudança naquele repositório respeita. A spec tem de citar **cada uma** numa seção
+  `## Travas do alvo` ("aplica: como" ou "não se aplica: porquê"), senão a tarefa é recusada já
+  no `--dry-run`. A trava não é para o agente lembrar; é para quem escreve a spec não esquecer.
+
+A tarefa de exemplo usa as duas.
 
 ## Requisitos
 
@@ -70,6 +89,8 @@ Cada jeito de falhar tem um código de saída:
 | 6 | agente | o Claude Code terminou em erro, mesmo com rc 0 (login vencido, por exemplo) |
 | 7 | linha de base | os testes já falhavam no main: o agente nem foi chamado |
 | 8 | linha de base | a worktree estava suja de um voo anterior |
+| 9 | aceite | o aceite já passava antes do agente, ou nem rodou como teste (erro de import na coleta) |
+| 10 | aceite | o agente mexeu no aceite, ou ele não passou inteiro (falha, skip, contagem menor) |
 
 ## Sua própria tarefa
 
@@ -88,7 +109,15 @@ Cada jeito de falhar tem um código de saída:
 3. Confira o `.gitignore` do projeto-alvo: cache e arquivo gerado pelos testes (`__pycache__`,
    `.pytest_cache`, cobertura) têm de estar nele. Senão o harness vê arquivo novo fora da lista e
    recusa o commit (rc 4), mesmo com tudo verde. O primeiro voo deste kit caiu exatamente nisso.
-4. Rode sempre `--dry-run` antes do `--live`.
+4. **Aceite (opcional, recomendado para feature):** ponha os testes em `ops/<nome>/aceite/` com o
+   caminho que terão no projeto (`aceite/tests/test_aceite_x.py` vira `tests/test_aceite_x.py`) e
+   declare `"aceite": {"cmd": "python3 -m unittest tests.test_aceite_x"}` (ou o pytest
+   equivalente). **Importe o código novo dentro de cada teste**: import no topo do arquivo quebra a
+   coleta, e erro de coleta não prova nada (rc 9).
+5. **Travas (opcional):** crie `alvos/<nome>.md` com as regras numeradas (`[EX-01]`), declare
+   `"alvo": "<nome>"` e escreva a seção `## Travas do alvo` na OPORD. Trava nova nasce quando
+   uma tarefa, ou a revisão dela, achar uma regra que a spec não previu.
+6. Rode sempre `--dry-run` antes do `--live`.
 
 Para suítes longas, ponha `BASH_DEFAULT_TIMEOUT_MS=1200000 BASH_MAX_TIMEOUT_MS=1200000` na frente
 do `claude -p` no `cmd_template`. Sem isso, o Claude Code manda para segundo plano todo comando de
@@ -105,13 +134,17 @@ mais de 2 minutos, e o agente nunca vê o fim dos testes.
 - **Nada em segundo plano.** Em `claude -p`, quando o agente para de falar a sessão acaba; o que
   ele deixou rodando é morto antes da verificação.
 - **Teste verde não prova o desenho.** Autorização errada e regra de negócio errada passaram
-  verdes. Revisão humana antes do merge, sempre.
+  verdes. Revisão humana antes do merge, sempre — e, desde a v0.4, o aceite escrito antes.
+- **A spec também erra.** Uma ordem proibia justo o que duas regras do repositório exigiam;
+  o agente obedeceu e o gate reprovou. As travas fazem o erro aparecer antes do voo.
 
 ## Limitações
 
 - Uma tarefa por vez, e sem nova tentativa automática: o re-voo é decisão humana.
 - O resumo da verificação no AAR entende a saída de `pytest`, `ruff` e `mypy`. Outros comandos
   funcionam como gate (o que vale é o código de saída), só que sem contagem no relatório.
+- O aceite conta testes pelo resumo do `pytest` ou do `unittest`; outro runner precisa imprimir
+  um dos dois formatos.
 - Os textos do briefing e do AAR estão em português.
 
 ## Vocabulário
@@ -125,6 +158,10 @@ mais de 2 minutos, e o agente nunca vê o fim dos testes.
 | AAR | After Action Review | o relatório de cada tarefa |
 | Comandante | quem decide a missão | a pessoa responsável |
 | Mission command | comando pela intenção | fixo × livre na spec, desvio declarado |
+| Aceite | — | acceptance tests, escritos antes, imutáveis |
+| Travas do alvo | — | invariantes do repositório |
+
+A tabela completa, com os nomes de mercado, está em `doctrine/GLOSSARIO.md`.
 
 ## Licença
 

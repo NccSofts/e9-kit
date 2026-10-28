@@ -32,6 +32,13 @@ que títulos virem identificadores seguros de URL.
   - sem hífen no começo nem no fim;
   - `slug("")` e `slug("!!!")` devolvem `""`;
   - pelo menos um teste para cada item acima, e todos verdes.
+- **e. Aceite:** `tests/test_aceite_slug.py`, com os critérios acima, já está na worktree e
+  falha hoje. Só leitura: faça passar sem editar.
+
+### Travas do alvo
+- [EX-01] aplica: `tests/test_texto.py` ganha testes novos para `slug`, e os de `sem_acentos`
+  ficam como estão.
+- [EX-02] aplica: `re` e `unicodedata`, da biblioteca padrão; `sem_acentos` já existe.
 
 ### 4. APOIO
 Ambiente: Python 3 do sistema, sem venv. Teto: 20 minutos. Artefatos que podem mudar:

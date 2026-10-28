@@ -35,6 +35,13 @@ Uma frase: *quem* faz *o quê*, *onde* e *para quê*. Verbos mensuráveis; proib
   operador escolhe (onde e como).
 - **d. Critérios:** de pronto (objetivos), de abort (quando parar e reportar) e a verificação
   que tem de dar verde.
+- **e. Aceite (opcional):** os critérios de pronto escritos como teste, por quem pede, em
+  `ops/<tarefa>/aceite/`. Falham hoje, passam depois, e o operador não os edita.
+
+### Travas do alvo
+*(obrigatória quando o `op.json` declara `"alvo"` — ver `alvos/<alvo>.md`)*
+Uma linha para **cada** trava: `[ID] aplica: como` ou `[ID] não se aplica: porquê`. Faltou uma,
+a tarefa é recusada antes de começar.
 
 ### 4. APOIO
 Ambiente para rodar (venv, `.env` de teste, banco de teste), teto de tempo e custo, e os

@@ -1,9 +1,12 @@
 {
   "op": "exemplo-slug",
+  "alvo": "exemplo",
   "target_repo": "/tmp/e9-exemplo/projeto",
   "branch": "feat/slug",
   "worktree": "/tmp/e9-exemplo/wt-slug",
-  "prod_markers": ["/srv/producao"],
+  "prod_markers": [
+    "/srv/producao"
+  ],
   "commit_identity": {
     "name": "E-9",
     "email": "e9@localhost"
@@ -20,6 +23,9 @@
     "test_cmd": "python3 -m unittest discover -s tests -t .",
     "timeout_s": 120
   },
+  "aceite": {
+    "cmd": "python3 -m unittest tests.test_aceite_slug"
+  },
   "expected_artifacts": [
     "texto.py",
     "tests/test_texto.py"
@@ -27,6 +33,7 @@
   "_notas": [
     "Antes do primeiro voo: sh exemplo/preparar.sh (cria o repositório-alvo em /tmp/e9-exemplo/projeto).",
     "prod_markers: troque pelos trechos de caminho ou nome de máquina que, no seu ambiente, significam produção. Se o target_repo bater em um deles, a tarefa é recusada antes de começar.",
-    "allowedTools: em claude -p ninguém aprova comando novo; o que não estiver liberado aqui é recusado em silêncio. O E-9 copia esta lista para o briefing."
+    "allowedTools: em claude -p ninguém aprova comando novo; o que não estiver liberado aqui é recusado em silêncio. O E-9 copia esta lista para o briefing.",
+    "aceite e alvo (v0.4): o aceite em aceite/ falha antes do agente e passa depois; as travas de alvos/exemplo.md são citadas na OPORD."
   ]
 }
