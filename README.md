@@ -1,105 +1,30 @@
 # E-9 kit
 
 Um harness em Python, só biblioteca padrão, que roda o **Claude Code sem ninguém olhando**
-(`claude -p`) numa cópia isolada do seu repositório e **decide de fora** se o resultado presta:
-o agente não consegue fazer push, merge nem mexer em arquivo que a spec não liberou, e o
-"está pronto" quem diz é a sua suíte de testes, não o agente.
+(`claude -p`) numa cópia isolada do seu repositório e **decide de fora** se o resultado presta. O
+agent não consegue fazer push, merge nem mexer em arquivo que a spec não liberou. Quem diz que está
+pronto é a sua suíte de testes, não o agent.
 
-Nasceu de onze tarefas reais num produto em produção. Cada regra daqui veio de uma tarefa
-que deu errado.
+Nasceu de duas dezenas de tarefas reais num produto em produção, e cada regra daqui veio de uma
+delas que deu errado. Versão **v0.9**.
 
 ## Nos termos da indústria
 
-| Termo | No E-9 |
+| Pilar | No E-9 |
 |---|---|
-| **Spec-driven development** | `OPORD.md` (a spec, para o agente ler) + `op.json` (o contrato, para o script conferir) |
-| **Context engineering** | agente novo por tarefa, worktree isolada, spec escrita depois de ler o código |
-| **Harness engineering** | regras em código: git sem push/merge, spec validada, só entram os arquivos listados |
-| **Loop engineering** | testes antes e depois do agente, teto de tempo, relatório (`AAR.md`) de todo voo |
+| **Spec-driven development** | `spec.md` (para o agent ler), com requirements `FR-NNN`, + `op.json` (o contrato, para o script conferir) |
+| **Context engineering** | agent novo por op, worktree isolada, spec escrita depois de ler o código |
+| **Harness engineering** | policy em código: git sem push/merge, spec validada, só entram os arquivos listados |
+| **Loop engineering** | baseline, quality gate, acceptance tests, traceability matrix e run report (`report.md`) de todo run |
 
-O vocabulário militar (OPORD, ROE, AAR, overwatch) está traduzido no fim deste arquivo, e
-termo por termo, com o nome de mercado, em `doctrine/GLOSSARIO.md`.
-
-## O que mudou na v0.4
-
-A pergunta que faltava ao harness era *"o pedido foi cumprido?"* — o gate só responde *"nada
-quebrou?"*. Em duas tarefas reais o gate deu verde com o desenho errado, e numa terceira a spec
-contradizia regras do próprio repositório que quem a escreveu esqueceu. Duas peças novas,
-opcionais:
-
-- **Aceite (acceptance tests).** Testes escritos por quem pede, antes do voo, em
-  `ops/<tarefa>/aceite/`. O harness exige que **falhem** antes do agente, que **ninguém os
-  edite** (confere o sha256) e que **passem inteiros, sem skip**, depois. Entram no commit como
-  regressão. É o critério de pronto virando código: Hoare e Meyer, sem a cerimônia.
-- **Travas do alvo (invariants).** `alvos/<repo>.md` lista, numeradas, as regras que toda
-  mudança naquele repositório respeita. A spec tem de citar **cada uma** numa seção
-  `## Travas do alvo` ("aplica: como" ou "não se aplica: porquê"), senão a tarefa é recusada já
-  no `--dry-run`. A trava não é para o agente lembrar; é para quem escreve a spec não esquecer.
-
-A tarefa de exemplo usa as duas.
-
-## O que mudou na v0.5
-
-- **O tempo do portão vai medido ao agente.** Numa tarefa real o agente pediu `timeout` de 5 min ao
-  Bash para uma suíte de 6m20s. No Claude Code, comando que passa do `timeout` pedido **não é
-  morto**: vai para segundo plano sozinho, e em `claude -p` o aviso de "terminou" nunca chega — o
-  agente encerrou "aguardando". Agora, depois da linha de base, o briefing ganha quanto o portão
-  levou neste voo e o `timeout` a usar (o dobro, entre 10 min e o `BASH_MAX_TIMEOUT_MS`).
-- **Etapas com teto.** O `metrics.json` grava o começo e o teto de cada etapa (linha de base, aceite,
-  agente, verificação, commit), e `fases.json` mostra a etapa em curso a quem quiser acompanhar.
-- **O re-voo não apaga o voo anterior.** O resumo dele fica em `voos_anteriores`: dá para medir o
-  verde de primeira.
-- **O desfecho no alvo** (`orchestrator/revisar.py`): o gate sabe se passou; só quem revisa sabe se
-  entrou como veio. O AAR de voo que deixa algo para mergear termina pedindo:
-
-  ```bash
-  python3 orchestrator/revisar.py --op ops/<tarefa> --como-veio --commit-alvo <sha>
-  python3 orchestrator/revisar.py --op ops/<tarefa> --consertado "o que mudou" --commit-alvo <sha>
-  python3 orchestrator/revisar.py --op ops/<tarefa> --descartado "por quê"
-  ```
-
-  Grava `revisao` no `metrics.json` e troca a seção do AAR sem regerar o resto. Tarefa com
-  `"treino": true` não pede revisão.
-- O `metrics.json` grava também o código de saída (`rc`) e os arquivos do commit.
-- Voo de teste da v0.5: verde, com as oito etapas gravadas e o tempo do portão no briefing.
-
-## Requisitos
-
-- **Linux ou WSL.** No Windows puro o script roda, mas sem duas proteções: matar o grupo inteiro
-  de processos no estouro de tempo e matar o que o agente deixou rodando na worktree.
-- Python 3.10 ou mais novo, git.
-- [Claude Code](https://docs.claude.com/claude-code) instalado e com login feito (`claude` no PATH).
-- **Uma máquina que não seja a de produção.** O kit recusa alvo que bata em `prod_markers`, mas
-  quem garante de verdade é não ter credencial nem rota de produção no ambiente do agente.
-
-## Começo rápido
-
-```bash
-# 1. os testes do próprio harness (não chamam o Claude)
-python3 orchestrator/test_e9_run.py
-
-# 2. cria o projeto de exemplo em /tmp/e9-exemplo/projeto
-sh exemplo/preparar.sh
-
-# 3. ensaio: valida a spec e mostra o plano, sem mexer em nada
-python3 orchestrator/e9_run.py --op ops/exemplo-slug --dry-run
-
-# 4. o voo de verdade (chama o Claude; custa alguns centavos de dólar)
-python3 orchestrator/e9_run.py --op ops/exemplo-slug --live
-
-# 5. o resultado
-cat ops/exemplo-slug/AAR.md
-git -C /tmp/e9-exemplo/wt-slug log --oneline -3
-```
-
-Verde: a branch `feat/slug` tem um commit, e o `AAR.md` mostra o relatório do agente ao lado do
-que os testes mediram. Merge é com você.
+Os nomes estão em `process/GLOSSARY.md`, com a coluna dos nomes antigos para quem tem ops da v0.5.
 
 ## O ciclo
 
 ```
---dry-run (padrão) → worktree → testes no main limpo → agente → testes de novo
-                   → só os arquivos listados → commit na branch, sem push → AAR
+dry run → worktree (+ banco do run) → baseline → acceptance tests (têm de falhar) → agent
+        → quality gate → acceptance tests (têm de passar, intactos) → AI code review (opcional)
+        → só os arquivos listados → commit na feat/*, sem push → run report
 ```
 
 Cada jeito de falhar tem um código de saída:
@@ -108,85 +33,175 @@ Cada jeito de falhar tem um código de saída:
 |---|---|---|
 | 0 | fim | commit na branch, pronto para revisão |
 | 2 | worktree | não montou a cópia isolada |
-| 3 | verificação | o agente entregou e os testes reprovaram |
-| 4 | commit | o agente mexeu em arquivo fora da lista |
-| 5 | agente | estourou o teto de tempo |
-| 6 | agente | o Claude Code terminou em erro, mesmo com rc 0 (login vencido, por exemplo) |
-| 7 | linha de base | os testes já falhavam no main: o agente nem foi chamado |
-| 8 | linha de base | a worktree estava suja de um voo anterior |
-| 9 | aceite | o aceite já passava antes do agente, ou nem rodou como teste (erro de import na coleta) |
-| 10 | aceite | o agente mexeu no aceite, ou ele não passou inteiro (falha, skip, contagem menor) |
+| 3 | quality gate | o agent entregou e o gate reprovou |
+| 4 | commit | o agent mexeu em arquivo fora da lista |
+| 5 | agent | estourou o teto de tempo |
+| 6 | agent | o Claude Code terminou em erro, mesmo com rc 0 (login vencido, por exemplo) |
+| 7 | baseline | o gate já falhava no main: o agent nem foi chamado |
+| 8 | baseline | a worktree estava suja de um run anterior |
+| 9 | acceptance tests | já passavam antes do agent, ou nem rodaram como teste (erro de import na coleta) |
+| 10 | acceptance tests | o agent mexeu neles, ou não passaram inteiros (falha, skip, contagem menor) |
+| 11 | trava da op | a mesma op já está rodando |
+| 12 | banco do run | o Postgres do run não subiu ou não responde: nada foi despachado |
 
-## Sua própria tarefa
+## O que mudou da v0.5 para a v0.9
 
-1. Crie `ops/<nome>/` com um `OPORD.md` (modelo em `doctrine/OPORD-template.md`) e um `op.json`
+- **v0.6 — AI code review de outra família de modelo** (`orchestrator/reviewer.py`, opcional). O
+  ponto cego medido do harness é o gate verde com o desenho errado. Um modelo da OpenAI, pelo
+  OpenRouter, lê a spec, os guardrails e o diff e diz se aquilo faz o que foi pedido. Ele **só
+  informa**: o parecer vai ao run report e ao `metrics.json`, e nunca muda o rc. Na calibração,
+  acertou um defeito numa tarefa e deixou passar o mesmo defeito na seguinte, então é pista, não
+  prova. O diff sai mascarado (CNJ, CNPJ, CPF, e-mail), `.env*` nunca entra, e o pedido exige
+  provedor sem retenção (ZDR). Se nenhum atender, fica "indisponível", e o pedido **nunca** se
+  repete sem a restrição. Quando o provedor está sobrecarregado ("high demand", "rate-limited",
+  HTTP 429), repete o mesmo pedido, até duas vezes.
+- **v0.7 — banco próprio por run** (`orchestrator/workspace.py`, opcional). Com dois runs no mesmo
+  repositório, o banco de teste compartilhado inventa falhas de um para o outro. A op que declara
+  `"workspace": {"banco": "exemplo"}` ganha um Postgres num container descartável (receita em
+  `targets/exemplo.workspace.json`): tmpfs, porta efêmera, senha gerada no run e nunca escrita em
+  arquivo, papel da aplicação **sem** superuser. Junto vieram a trava por op (rc 11), os slots (no
+  máximo `E9_MAX_VOOS` runs juntos, padrão 2) e a guarda contra o skip silencioso: a suíte que pula
+  os testes de banco que não conectam sairia verde com metade dela sem rodar.
+- **v0.8 — traceability.** A spec ganha a seção `## Requirements`, com IDs `FR-NNN` no formato do
+  Spec Kit, e cada acceptance test leva no nome o requirement que prova (`test_fr_001_...`). O
+  harness recusa a op, já no `--dry-run`, se um requirement ficar sem teste, se um teste não disser
+  qual prova ou se citar um que não existe. O run report traz a matriz requirement × test × base ×
+  entrega. Na estreia, a matriz pegou um teste que passava sem provar o requirement, e é para isso
+  que ela existe.
+- **v0.9 — vocabulário de mercado.** Até a v0.5 o kit falava militar (OPORD, ROE, operador,
+  overwatch, AAR). Agora: spec, policy, agent, quality gate, acceptance tests, guardrails, run
+  report, owner. `doctrine/` virou `process/`, `alvos/` virou `targets/`, `OPORD.md` virou
+  `spec.md`, `aceite/` virou `acceptance/`. **As ops antigas continuam rodando como estão**:
+  `orchestrator/compat.py` é o único lugar que conhece os nomes velhos e os traduz na leitura
+  (chaves do `op.json`, nomes de arquivo, seções da spec).
+- O `prod_markers` deixou de ter valores fixos: o que conta como produção é declarado no `op.json`
+  de cada op.
+
+## Requisitos
+
+- **Linux ou WSL.** No Windows puro o script roda, mas sem duas proteções: matar o grupo inteiro de
+  processos no estouro de tempo e matar o que o agent deixou rodando na worktree.
+- Python 3.10 ou mais novo, git.
+- [Claude Code](https://docs.claude.com/claude-code) instalado e com login feito (`claude` no PATH).
+- **Uma máquina que não seja a de produção.** O kit recusa target que bata em `prod_markers`, mas
+  quem garante de verdade é não ter credencial nem rota de produção no ambiente do agent.
+- Opcionais: **Docker**, para o banco por run; uma **chave do OpenRouter** com teto de crédito, para
+  o AI code review.
+
+## Começo rápido
+
+```bash
+# 1. os testes do próprio harness (não chamam o Claude nem sobem container)
+python3 -m pytest -q orchestrator          # ou: python3 orchestrator/test_e9_run.py
+
+# 2. cria o projeto de exemplo em /tmp/e9-exemplo/projeto
+sh exemplo/preparar.sh
+
+# 3. dry run: valida a spec e mostra o plano, sem mexer em nada
+python3 orchestrator/e9_run.py --op ops/exemplo-slug --dry-run
+
+# 4. o run de verdade (chama o Claude; custa alguns centavos de dólar)
+python3 orchestrator/e9_run.py --op ops/exemplo-slug --live
+
+# 5. o resultado
+cat ops/exemplo-slug/report.md
+git -C /tmp/e9-exemplo/wt-slug log --oneline -3
+```
+
+Verde: a branch `feat/slug` tem um commit, e o `report.md` mostra o relatório do agent ao lado do
+que o gate mediu e da traceability matrix. Merge é com você. Depois dele, grave o desfecho:
+
+```bash
+python3 orchestrator/revisar.py --op ops/<op> --como-veio --commit-alvo <sha>
+python3 orchestrator/revisar.py --op ops/<op> --consertado "o que mudou" --commit-alvo <sha>
+python3 orchestrator/revisar.py --op ops/<op> --descartado "por quê"
+```
+
+O gate sabe se passou; só quem revisa sabe se entrou como veio. Op com `"treino": true` não pede
+revisão.
+
+## Sua própria op
+
+1. Crie `ops/<nome>/` com um `spec.md` (modelo em `process/SPEC-template.md`) e um `op.json`
    (copie o do exemplo).
 2. No `op.json`, os campos que importam:
    - `target_repo`, `worktree`, `branch` (sempre `feat/...`);
    - `prod_markers`: trechos que, se aparecerem no `target_repo`, querem dizer produção;
    - `expected_artifacts` (obrigatórios, aceitam glob) e `optional_artifacts`;
-   - `overwatch.test_cmd`: o mesmo comando que o seu CI roda;
-   - `operator.cmd_template`: o `claude -p` com `--allowedTools` liberando exatamente os comandos
-     de teste. Em modo não interativo, comando fora da lista é recusado em silêncio;
+   - `gate.test_cmd`: o mesmo comando que o seu CI roda;
+   - `agent.model`: o **id completo** do modelo, nunca o alias, que pode resolver para um modelo
+     mais velho sem ninguém saber;
+   - `agent.cmd_template`: o `claude -p` com `--allowedTools` liberando exatamente os comandos de
+     teste. Em modo não interativo, comando fora da lista é recusado em silêncio;
    - `worktree_link`: arquivos fora do git que o projeto precisa para rodar (um `.env` **de
      teste**, por exemplo), ligados na worktree por link simbólico;
    - `venv`: se o projeto usa um, para os placeholders `{venv}` do comando.
 3. Confira o `.gitignore` do projeto-alvo: cache e arquivo gerado pelos testes (`__pycache__`,
    `.pytest_cache`, cobertura) têm de estar nele. Senão o harness vê arquivo novo fora da lista e
-   recusa o commit (rc 4), mesmo com tudo verde. O primeiro voo deste kit caiu exatamente nisso.
-4. **Aceite (opcional, recomendado para feature):** ponha os testes em `ops/<nome>/aceite/` com o
-   caminho que terão no projeto (`aceite/tests/test_aceite_x.py` vira `tests/test_aceite_x.py`) e
-   declare `"aceite": {"cmd": "python3 -m unittest tests.test_aceite_x"}` (ou o pytest
-   equivalente). **Importe o código novo dentro de cada teste**: import no topo do arquivo quebra a
-   coleta, e erro de coleta não prova nada (rc 9).
-5. **Travas (opcional):** crie `alvos/<nome>.md` com as regras numeradas (`[EX-01]`), declare
-   `"alvo": "<nome>"` e escreva a seção `## Travas do alvo` na OPORD. Trava nova nasce quando
-   uma tarefa, ou a revisão dela, achar uma regra que a spec não previu.
-6. Rode sempre `--dry-run` antes do `--live`.
+   recusa o commit (rc 4), mesmo com tudo verde.
+4. **Acceptance tests e requirements (recomendado para feature):** escreva os requirements na seção
+   `## Requirements` da spec (`- **FR-001** — ...`) e ponha os testes em `ops/<nome>/acceptance/`
+   com o caminho que terão no projeto (`acceptance/tests/test_acceptance_x.py` vira
+   `tests/test_acceptance_x.py`), cada um com o requirement no nome (`test_fr_001_...`). Declare
+   `"acceptance": {"cmd": "python3 -m unittest tests.test_acceptance_x"}` (ou o pytest
+   equivalente). **Importe o código novo dentro de cada teste**: import no topo quebra a coleta, e
+   erro de coleta não prova nada (rc 9). O requirement que nenhum teste prova diz isso na própria
+   linha: `(sem aceite: o gate prova)`.
+5. **Guardrails (opcional):** crie `targets/<nome>.md` com as regras numeradas (`[EX-01]`), declare
+   `"target": "<nome>"` e escreva a seção `## Guardrails` na spec, uma linha por guardrail
+   (`aplica: como` ou `não se aplica: porquê`). Guardrail novo nasce quando uma op, ou a revisão
+   dela, achar uma regra que a spec não previu.
+6. **Banco por run (opcional):** copie `targets/exemplo.workspace.json` e `exemplo.db.sql` para a
+   sua receita, ajuste imagem, papel e variáveis, e declare `"workspace": {"banco": "<receita>"}`.
+   A sua aplicação precisa ler a URL do banco do ambiente antes de qualquer `.env`.
+7. **AI code review (opcional):** ponha `E9_REVISOR_KEY=<chave do OpenRouter>` num `.env` na raiz
+   do kit (fora do git). Sem chave, o run grava "sem chave" e segue; `"reviewer": false` no
+   `op.json` o desliga, e `"reviewer": {"modelo": "..."}` troca o modelo.
+8. Rode sempre `--dry-run` antes do `--live`.
 
 Para suítes longas, ponha `BASH_DEFAULT_TIMEOUT_MS=1200000 BASH_MAX_TIMEOUT_MS=1200000` na frente
 do `claude -p` no `cmd_template`. Sem isso, o Claude Code manda para segundo plano todo comando de
-mais de 2 minutos, e o agente nunca vê o fim dos testes.
+mais de 2 minutos, e o agent nunca vê o fim dos testes. Desde a v0.5 o briefing já leva quanto o
+gate levou na baseline e o `timeout` a pedir.
+
+### Variáveis de ambiente
+
+| Variável | Para quê |
+|---|---|
+| `E9_MAX_VOOS` | quantos runs ao mesmo tempo (padrão 2) |
+| `E9_SLOT_TETO_S` | quanto um run espera por um slot livre (padrão 6 h) |
+| `E9_PRIORITARIOS` | processos que têm a vez na máquina, separados por vírgula; com um rodando, o run espera |
+| `E9_SEM_ESPERA` | `1` ignora a espera acima |
+| `E9_SEM_REVISOR` | `1` desliga o AI code review |
+| `E9_DOCKER` | o comando do docker (padrão `docker`) |
 
 ## O que aprendemos (e virou código)
 
-- **O relatório do agente é declaração; o teste é a prova.** O agente já disse "tudo verde" com
-  cinco testes falhando e "418 passed" com a suíte em 814. O AAR põe os dois lado a lado.
-- **Testar o main antes do agente.** Sem isso, um main já vermelho gasta uma hora de agente
-  tentando consertar o que ele não quebrou.
-- **`claude -p` com login vencido sai com código 0.** O erro só aparece no último evento da
-  saída; o harness lê o evento, não o código.
-- **Nada em segundo plano.** Em `claude -p`, quando o agente para de falar a sessão acaba; o que
-  ele deixou rodando é morto antes da verificação.
-- **Teste verde não prova o desenho.** Autorização errada e regra de negócio errada passaram
-  verdes. Revisão humana antes do merge, sempre — e, desde a v0.4, o aceite escrito antes.
-- **A spec também erra.** Uma ordem proibia justo o que duas regras do repositório exigiam;
-  o agente obedeceu e o gate reprovou. As travas fazem o erro aparecer antes do voo.
+- **O relatório do agent é declaração; o gate é a prova.** O agent já disse "tudo verde" com cinco
+  testes falhando e "418 passed" com a suíte em 814. O run report põe os dois lado a lado.
+- **Testar o main antes do agent.** Sem isso, um main já vermelho gasta uma hora de agent tentando
+  consertar o que ele não quebrou.
+- **`claude -p` com login vencido sai com código 0.** O erro só aparece no último evento da saída;
+  o harness lê o evento, não o código.
+- **Nada em segundo plano.** Em `claude -p`, quando o agent para de falar a sessão acaba; o que ele
+  deixou rodando é morto antes da verificação.
+- **Gate verde não prova o desenho.** Autorização errada e regra de negócio errada passaram verdes.
+  Por isso há acceptance tests escritos antes, a traceability matrix e o segundo olhar de outro
+  modelo. E revisão humana antes do merge, sempre.
+- **A spec também erra.** Uma ordem proibia justo o que dois guardrails do repositório exigiam; o
+  agent obedeceu e o gate reprovou. Os guardrails fazem o erro aparecer antes do run.
+- **Teste que passa na base não prova o requirement.** A matriz marca isso como guarda de regressão,
+  em vez de deixar passar como prova.
 
 ## Limitações
 
-- Uma tarefa por vez, e sem nova tentativa automática: o re-voo é decisão humana.
-- O resumo da verificação no AAR entende a saída de `pytest`, `ruff` e `mypy`. Outros comandos
-  funcionam como gate (o que vale é o código de saída), só que sem contagem no relatório.
-- O aceite conta testes pelo resumo do `pytest` ou do `unittest`; outro runner precisa imprimir
-  um dos dois formatos.
-- Os textos do briefing e do AAR estão em português.
-
-## Vocabulário
-
-| No E-9 | Origem militar | Termo da indústria |
-|---|---|---|
-| OPORD | ordem de operação, cinco parágrafos | a spec |
-| ROE | regras de engajamento | cercas e permissões do harness |
-| Operador | quem executa a missão | o agente (`claude -p`) |
-| Overwatch | cobertura de quem está no terreno | a verificação |
-| AAR | After Action Review | o relatório de cada tarefa |
-| Comandante | quem decide a missão | a pessoa responsável |
-| Mission command | comando pela intenção | fixo × livre na spec, desvio declarado |
-| Aceite | — | acceptance tests, escritos antes, imutáveis |
-| Travas do alvo | — | invariantes do repositório |
-
-A tabela completa, com os nomes de mercado, está em `doctrine/GLOSSARIO.md`.
+- Sem nova tentativa automática: o re-run é decisão humana.
+- O resumo do gate no run report entende a saída de `pytest`, `unittest`, `ruff` e `mypy`. Outros
+  comandos funcionam como gate (o que vale é o código de saída), só que sem contagem no relatório.
+- Os acceptance tests contam testes pelo resumo do `pytest` ou do `unittest`; outro runner precisa
+  imprimir um dos dois formatos.
+- O banco por run só sabe subir Postgres.
+- Os textos do briefing e do run report estão em português.
 
 ## Licença
 

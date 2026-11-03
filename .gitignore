@@ -1,10 +1,21 @@
-# Saída de cada voo: o operador lê arquivos do projeto-alvo, então o bruto não vai para o git.
+# Segredos: nunca versionar (a chave do AI code review mora no .env da raiz)
+.env
+.env.*
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Saída bruta de cada run: o agent lê arquivos do projeto-alvo, então o bruto não vai para o git.
+# Os nomes antigos (até a v0.5) ficam junto, para as ops escritas antes.
+ops/*/agent.jsonl
+ops/*/gate.log
 ops/*/operator.jsonl
 ops/*/overwatch.log
 ops/*/baseline.log
 ops/*/_brief.txt
+ops/*/acceptance-*.log
 ops/*/aceite-*.log
 ops/*/fases.json
-__pycache__/
-*.pyc
-.env
+ops/*/.voo.lock
