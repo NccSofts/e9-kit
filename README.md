@@ -6,7 +6,17 @@ agent não consegue fazer push, merge nem mexer em arquivo que a spec não liber
 pronto é a sua suíte de testes, não o agent.
 
 Nasceu de duas dezenas de tarefas reais num produto em produção, e cada regra daqui veio de uma
-delas que deu errado. Versão **v0.9**.
+delas que deu errado. Versão **v0.9**; o que mudou de uma versão para outra está no
+[`CHANGELOG.md`](CHANGELOG.md).
+
+O porquê de cada peça, com os números das tarefas que as originaram, está no artigo
+[Especificar, cercar, provar](https://www.nccsofts.com.br/artigos/especificar-cercar-provar/).
+
+> **O que este repositório é, e o que não é.** É a versão limpa de um harness que uso no meu
+> próprio trabalho, publicada para mostrar o método funcionando. É projeto de uma pessoa, não
+> produto: não há suporte, prazo nem garantia de que a próxima versão chegue aqui, e o kit pode
+> ficar atrás do harness que eu rodo. Use, copie e adapte à vontade (licença MIT); só não conte
+> com ele como fornecedor.
 
 ## Nos termos da indústria
 
@@ -43,39 +53,6 @@ Cada jeito de falhar tem um código de saída:
 | 10 | acceptance tests | o agent mexeu neles, ou não passaram inteiros (falha, skip, contagem menor) |
 | 11 | trava da op | a mesma op já está rodando |
 | 12 | banco do run | o Postgres do run não subiu ou não responde: nada foi despachado |
-
-## O que mudou da v0.5 para a v0.9
-
-- **v0.6 — AI code review de outra família de modelo** (`orchestrator/reviewer.py`, opcional). O
-  ponto cego medido do harness é o gate verde com o desenho errado. Um modelo da OpenAI, pelo
-  OpenRouter, lê a spec, os guardrails e o diff e diz se aquilo faz o que foi pedido. Ele **só
-  informa**: o parecer vai ao run report e ao `metrics.json`, e nunca muda o rc. Na calibração,
-  acertou um defeito numa tarefa e deixou passar o mesmo defeito na seguinte, então é pista, não
-  prova. O diff sai mascarado (CNJ, CNPJ, CPF, e-mail), `.env*` nunca entra, e o pedido exige
-  provedor sem retenção (ZDR). Se nenhum atender, fica "indisponível", e o pedido **nunca** se
-  repete sem a restrição. Quando o provedor está sobrecarregado ("high demand", "rate-limited",
-  HTTP 429), repete o mesmo pedido, até duas vezes.
-- **v0.7 — banco próprio por run** (`orchestrator/workspace.py`, opcional). Com dois runs no mesmo
-  repositório, o banco de teste compartilhado inventa falhas de um para o outro. A op que declara
-  `"workspace": {"banco": "exemplo"}` ganha um Postgres num container descartável (receita em
-  `targets/exemplo.workspace.json`): tmpfs, porta efêmera, senha gerada no run e nunca escrita em
-  arquivo, papel da aplicação **sem** superuser. Junto vieram a trava por op (rc 11), os slots (no
-  máximo `E9_MAX_VOOS` runs juntos, padrão 2) e a guarda contra o skip silencioso: a suíte que pula
-  os testes de banco que não conectam sairia verde com metade dela sem rodar.
-- **v0.8 — traceability.** A spec ganha a seção `## Requirements`, com IDs `FR-NNN` no formato do
-  Spec Kit, e cada acceptance test leva no nome o requirement que prova (`test_fr_001_...`). O
-  harness recusa a op, já no `--dry-run`, se um requirement ficar sem teste, se um teste não disser
-  qual prova ou se citar um que não existe. O run report traz a matriz requirement × test × base ×
-  entrega. Na estreia, a matriz pegou um teste que passava sem provar o requirement, e é para isso
-  que ela existe.
-- **v0.9 — vocabulário de mercado.** Até a v0.5 o kit falava militar (OPORD, ROE, operador,
-  overwatch, AAR). Agora: spec, policy, agent, quality gate, acceptance tests, guardrails, run
-  report, owner. `doctrine/` virou `process/`, `alvos/` virou `targets/`, `OPORD.md` virou
-  `spec.md`, `aceite/` virou `acceptance/`. **As ops antigas continuam rodando como estão**:
-  `orchestrator/compat.py` é o único lugar que conhece os nomes velhos e os traduz na leitura
-  (chaves do `op.json`, nomes de arquivo, seções da spec).
-- O `prod_markers` deixou de ter valores fixos: o que conta como produção é declarado no `op.json`
-  de cada op.
 
 ## Requisitos
 
