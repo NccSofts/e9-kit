@@ -261,7 +261,8 @@ def test_escuta_so_nesta_maquina_por_padrao():
 
 
 def test_pagina_sem_nada_de_outra_instalacao():
-    for palavra in ("Xeon", "celular", "WireGuard", "Zulu", "Aviso no celular", "fábrica"):
+    """Nada de faixa de máquina, de canal de aviso nem de hora militar: a página é de quem roda o kit."""
+    for palavra in ("AO <b>", "Aviso no", "Zulu", "DTG", "fábrica"):
         assert palavra not in v.PAGINA, palavra
 
 
