@@ -6,7 +6,7 @@ agent não consegue fazer push, merge nem mexer em arquivo que a spec não liber
 pronto é a sua suíte de testes, não o agent.
 
 Nasceu de duas dezenas de tarefas reais num produto em produção, e cada regra daqui veio de uma
-delas que deu errado. Versão **v0.9**; o que mudou de uma versão para outra está no
+delas que deu errado. Versão **v0.9.1**; o que mudou de uma versão para outra está no
 [`CHANGELOG.md`](CHANGELOG.md).
 
 O porquê de cada peça, com os números das tarefas que as originaram, está no artigo
@@ -77,10 +77,13 @@ sh exemplo/preparar.sh
 # 3. dry run: valida a spec e mostra o plano, sem mexer em nada
 python3 orchestrator/e9_run.py --op ops/exemplo-slug --dry-run
 
-# 4. o run de verdade (chama o Claude; custa alguns centavos de dólar)
+# 4. (opcional) noutro terminal, o Monitor E-9 para ver o agent trabalhando:
+#    python3 orchestrator/monitor.py      e abra http://127.0.0.1:8417 no navegador
+
+# 5. o run de verdade (chama o Claude; custa alguns centavos de dólar)
 python3 orchestrator/e9_run.py --op ops/exemplo-slug --live
 
-# 5. o resultado
+# 6. o resultado
 cat ops/exemplo-slug/report.md
 git -C /tmp/e9-exemplo/wt-slug log --oneline -3
 ```
@@ -96,6 +99,59 @@ python3 orchestrator/revisar.py --op ops/<op> --descartado "por quê"
 
 O gate sabe se passou; só quem revisa sabe se entrou como veio. Op com `"treino": true` não pede
 revisão.
+
+## Acompanhar pelo Monitor E-9
+
+O run acontece sem ninguém olhando, mas dá para olhar. O Monitor E-9 é uma página que mostra, ao
+vivo, o que o agent está fazendo, e o run report quando ele termina. Ele só lê os arquivos que o
+harness grava em `ops/`; não manda nada ao agent, não para o run e não grava coisa nenhuma.
+
+**1. Suba o Monitor**, num terminal à parte, na raiz do kit:
+
+```bash
+python3 orchestrator/monitor.py
+# [Monitor E-9] ... em http://127.0.0.1:8417 · ops em .../ops · Ctrl+C encerra
+```
+
+**2. Abra `http://127.0.0.1:8417` no navegador.** Pode deixar aberto antes de começar o run: a página
+pergunta a cada 3 segundos e troca sozinha para o run que estiver rodando.
+
+**3. Rode a op** noutro terminal, como sempre (`--live`). A página mostra:
+
+- **Runs**, à esquerda: cada op que já rodou, com o desfecho (VERDE, VERMELHO, BARRADA, ACCEPTANCE,
+  BASE, FALHA) e, se você gravou com o `revisar.py`, como ela entrou. Clique para ver outra.
+- **Status**: em que etapa o run está (baseline, acceptance antes, agent, gate, acceptance depois,
+  commit), com o cronômetro contra o teto de cada uma, os tokens gastos e as recusas de permissão.
+  Fica vermelho perto de estourar.
+- **Log do agent**, linha a linha, com a hora: **AÇÃO** (arquivo lido ou editado, comando rodado),
+  **FALA** (o que o agent escreveu), **ERRO** (ferramenta que falhou) e **RECUSA** (comando que o
+  `claude -p` recusou por falta de permissão: em modo não interativo ninguém aprova, e o agent segue
+  sem saber por quê. Se aparecer, falta o comando no `--allowedTools` da op).
+- **Run report**, quando termina, **na ordem da prova**: o veredito e o rc, o quality gate, a
+  baseline, o relatório comparado com o gate, os acceptance tests antes e depois, o AI code review,
+  os desvios que o agent declarou, custo, tempo de cada etapa e o commit. O relatório do agent fica
+  por último, fechado: ele é a declaração, o gate é a prova.
+- **Placar dos runs**: quantos deram verde, quantos de primeira, quantos entraram como vieram, em
+  quantos o relatório do agent contradisse o gate, e o custo. Ops com `"treino": true` ou com
+  `smoke` no nome ficam fora.
+
+**4. `Ctrl+C`** no terminal do Monitor encerra a página. O run não depende dele.
+
+Opções:
+
+```bash
+python3 orchestrator/monitor.py --porta 9000          # outra porta (se a 8417 estiver ocupada)
+E9_OPS_DIR=/outro/lugar/ops python3 orchestrator/monitor.py   # ler as ops de outra pasta
+```
+
+**Segurança.** Por padrão o Monitor escuta só em `127.0.0.1`, isto é, só na sua máquina: a página
+mostra o código, os comandos e os caminhos do seu projeto. `--host 0.0.0.0` abre para a rede local,
+e ele avisa ao subir. Se o run roda noutra máquina (um servidor, uma VM), prefira deixar o Monitor
+lá em `127.0.0.1` e abrir um túnel SSH, que só você usa:
+
+```bash
+ssh -N -L 8417:127.0.0.1:8417 usuario@servidor     # e abra http://127.0.0.1:8417 aqui
+```
 
 ## Sua própria op
 
@@ -178,7 +234,9 @@ gate levou na baseline e o `timeout` a pedir.
 - Os acceptance tests contam testes pelo resumo do `pytest` ou do `unittest`; outro runner precisa
   imprimir um dos dois formatos.
 - O banco por run só sabe subir Postgres.
-- Os textos do briefing e do run report estão em português.
+- Os textos do briefing, do run report e do Monitor estão em português.
+- O Monitor descobre o run em andamento pelo `/proc`, então só em Linux e WSL. No Windows puro a
+  página abre e mostra os runs terminados, mas não marca o que está rodando.
 
 ## Licença
 

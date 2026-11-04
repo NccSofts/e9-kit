@@ -928,7 +928,7 @@ def write_aar(op_dir: Path, op_id, results: dict):
             and not results.get("review")):
         lines += [LEMBRETE_REVISAO, "",
                   "Depois do merge (ou do descarte), a sessão do alvo grava o desfecho — é o número que o",
-                  "gate não dá, e o placar do dashboard mostra \"sem revisão\" até lá:", "", "```",
+                  "gate não dá, e o placar do Monitor mostra \"sem revisão\" até lá:", "", "```",
                   f"python orchestrator/revisar.py --op ops/{op_dir.name} --como-veio --commit-alvo <sha>",
                   f"python orchestrator/revisar.py --op ops/{op_dir.name} --consertado \"o que mudou\" --commit-alvo <sha>",
                   f"python orchestrator/revisar.py --op ops/{op_dir.name} --descartado \"por quê\"",
@@ -1124,7 +1124,7 @@ def _voar(cfg, op_dir, op_id, opord, alvo, aceite, brief, estado):
         tetos[nome] = cfg["gate"].get("timeout_s", GATE_TIMEOUT_S)
 
     def fase(nome):
-        """v0.5 — marca o começo de uma etapa, com o teto dela, em `fases.json` (o TOC lê para o
+        """v0.5 — marca o começo de uma etapa, com o teto dela, em `fases.json` (o Monitor lê para o
         cronômetro) e no metrics.json (o run report mostra quanto cada etapa levou)."""
         agora = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
         results.setdefault("fases", []).append({"fase": nome, "inicio": agora, "teto_s": tetos.get(nome)})
@@ -1137,7 +1137,7 @@ def _voar(cfg, op_dir, op_id, opord, alvo, aceite, brief, estado):
 
     def finish(rc, status):
         fase("fim")
-        results["rc"] = rc                # v0.4.2 — o TOC lê o código, não adivinha pelo texto
+        results["rc"] = rc                # v0.4.2 — o Monitor lê o código, não adivinha pelo texto
         results["status"] = status
         results["finished_at"] = datetime.now().isoformat()
         results["wall_clock_s"] = round(time.monotonic() - t0, 1)

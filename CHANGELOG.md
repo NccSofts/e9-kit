@@ -2,6 +2,17 @@
 
 As versões do kit, da mais nova para a mais antiga. As mudanças de comportamento vêm com o motivo, porque cada uma nasceu de uma falha medida.
 
+## v0.9.1 (2026-11-04) — Monitor E-9
+
+- **`orchestrator/monitor.py`**: a página que mostra o run ao vivo (o log do agent, a etapa com o
+  cronômetro contra o teto, as recusas de permissão) e, no fim, o run report na ordem da prova. Só
+  lê os arquivos de `ops/`; stdlib, sem dependência. Veio do painel que o harness original usa,
+  sem nada daquela instalação.
+- Escuta só em `127.0.0.1` por padrão: a página mostra o código e os comandos do agent.
+  `--host 0.0.0.0` abre para a rede, com aviso. Porta ocupada vira uma mensagem, não um traceback.
+- `orchestrator/test_monitor.py`: 19 casos, incluindo o de não sair da pasta de ops pelo nome que o
+  navegador manda e o de escutar só na máquina por padrão.
+
 ## v0.5 → v0.9 (2026-11-03)
 
 - **v0.6 — AI code review de outra família de modelo** (`orchestrator/reviewer.py`, opcional). O

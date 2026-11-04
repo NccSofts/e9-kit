@@ -60,6 +60,7 @@ Os quatro pilares em que o vocabulário da indústria se organiza:
 | discovery | recon | ler o target antes de escrever a spec |
 | sandbox | casa de tiro | onde o agent pode errar sem dano; produção é off-limits |
 | self-report vs. verification | relatório do operador × gate | o relatório é declaração; o gate é a prova |
+| Monitor E-9 (`orchestrator/monitor.py`) | TOC | a página ao vivo do run; só lê, e só em `127.0.0.1` por padrão |
 | `process/` | `doctrine/` | |
 | `targets/` | `alvos/` | |
 
