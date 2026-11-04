@@ -220,7 +220,7 @@ gate levou na baseline e o `timeout` a pedir.
   deixou rodando é morto antes da verificação.
 - **Gate verde não prova o desenho.** Autorização errada e regra de negócio errada passaram verdes.
   Por isso há acceptance tests escritos antes, a traceability matrix e o segundo olhar de outro
-  modelo. E revisão humana antes do merge, sempre.
+  modelo. E revisão antes do merge, fora do agent, sempre.
 - **A spec também erra.** Uma ordem proibia justo o que dois guardrails do repositório exigiam; o
   agent obedeceu e o gate reprovou. Os guardrails fazem o erro aparecer antes do run.
 - **Teste que passa na base não prova o requirement.** A matriz marca isso como guarda de regressão,

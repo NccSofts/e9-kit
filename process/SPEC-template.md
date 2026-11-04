@@ -11,7 +11,7 @@
 **Cabeçalho**
 - **Target:** repo + branch (`feat/...`) + máquina (o ambiente de ensaio, nunca a produção)
 - **Agent:** modelo e o que ele faz nesta op
-- **Owner:** quem aprova merge e deploy · executado pelo E-9
+- **Owner:** quem define a intent e as regras de merge e deploy · executado pelo E-9
 
 ---
 

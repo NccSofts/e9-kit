@@ -1332,7 +1332,7 @@ def _voar(cfg, op_dir, op_id, opord, alvo, aceite, brief, estado):
     finish(0,"OK — gate verde, commitado na branch (aguarda revisão do owner)")
     sitrep([f"OP {op_id}: VERDE.",
             f"Branch {cfg['branch']} commitada (SEM push).",
-            "run report + metrics gravados. Aguarda luz verde do owner p/ merge/deploy.",
+            "run report + metrics gravados. O merge passa por revisão, fora do agent.",
             f"No merge: python orchestrator/revisar.py --op ops/{op_dir.name} (--como-veio | --consertado | --descartado)"])
     return 0
 

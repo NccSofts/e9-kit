@@ -10,6 +10,9 @@ As versões do kit, da mais nova para a mais antiga. As mudanças de comportamen
   sem nada daquela instalação.
 - Escuta só em `127.0.0.1` por padrão: a página mostra o código e os comandos do agent.
   `--host 0.0.0.0` abre para a rede, com aviso. Porta ocupada vira uma mensagem, não um traceback.
+- Glossário, modelo de spec e mensagem de fim de run: o owner escreve as regras do merge e do
+  deploy, e o merge passa por revisão fora do agent; nenhum deles descreve mais alguém aprovando
+  caso a caso.
 - `orchestrator/test_monitor.py`: 19 casos, incluindo o de não sair da pasta de ops pelo nome que o
   navegador manda e o de escutar só na máquina por padrão.
 

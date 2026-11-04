@@ -16,7 +16,7 @@ Os quatro pilares em que o vocabulário da indústria se organiza:
 
 | Hoje | Antes | Nota |
 |---|---|---|
-| owner | Comandante | quem define a intent e aprova merge e deploy |
+| owner | Comandante | quem define a intent e escreve as regras do merge e do deploy; o merge passa por revisão, fora do agent |
 | E-9 (orchestrator · agent harness) | E-9 | o programa é o `e9_run.py` |
 | agent | operador | o `claude -p` que escreve o código numa worktree |
 | quality gate | overwatch | **determinístico** (lint + suíte), não um agente |
