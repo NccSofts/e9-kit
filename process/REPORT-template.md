@@ -23,6 +23,11 @@
 - **Acceptance tests e traceability:** a matriz requirement × test × base × entrega.
 - **AI code review** (se ligado): o veredito e os achados — informa, não decide.
 - **Custo:** tokens e US$ por run. **Tempo:** wall-clock.
+- **AI code review (v0.13):** a profundidade (rápido, padrão, fundo) e o porquê, os achados críticos
+  pelo `REVIEW.md` do target, e os detalhes cortados no limite.
+- **Calibração do reviewer (v0.13):** na revisão, o owner marca cada achado como real, falso ou parcial,
+  e conta os defeitos que o reviewer perdeu (`revisar.py --calibrar 1=real,2=falso --perdidos N`).
+- **Veto em sombra (v0.14):** o que o reviewer teria segurado se o veto estivesse ligado. Não está.
 - **Trajetória do agent (v0.11):** a varredura do `agent.jsonl` — segundo plano, timeout curto,
   acceptance test aberto para edição, teste em paralelo, rede. Só informa.
 - **Tempo do owner (v0.10):** minutos de spec e de revisão, registrados pelo owner (`owner.spec_min`

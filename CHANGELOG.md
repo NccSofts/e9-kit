@@ -2,6 +2,23 @@
 
 As versões do kit, da mais nova para a mais antiga. As mudanças de comportamento vêm com o motivo, porque cada uma nasceu de uma falha medida.
 
+## v0.13 e v0.14 (2026-11-24) — o reviewer com `REVIEW.md`, medido, e o veto em sombra
+
+- **`REVIEW.md` por target** (`targets/<target>.review.md`; sem ele, `process/REVIEW-template.md`): o
+  que é crítico no repositório (o achado ganha `critico: true`), os três passes (bugs, segurança,
+  aderência à spec e aos guardrails), o limite de detalhes e os caminhos sensíveis. O formato é o do
+  *AI-native SDLC playbook* da Anthropic.
+- **Profundidade por risco**: `"risk": "baixo|medio|alto"` no `op.json` → rápido, padrão, fundo. Sem a
+  chave, até 80 linhas e nenhum caminho sensível é rápido; o resto é padrão. Fundo faz um pedido por
+  passe, e o veredito é o pior dos três. Os detalhes acima do limite saem; crítico e severidade alta
+  ficam sempre.
+- **Calibração** (`orchestrator/calibracao.py`, `revisar.py --calibrar "1=real,2=falso,3=parcial"
+  --perdidos N`): o Monitor soma precisão e cobertura do reviewer.
+- **Veto em sombra (v0.14)**: o que o reviewer teria segurado (REPROVA ou achado crítico), gravado em
+  cada run e comparado no Monitor com o que o owner barrou na revisão. **Só registra**: o rc não muda.
+- `revisar.py` deixou de reescrever com os nomes novos as chaves de um `metrics.json` antigo.
+- 12 casos novos (`test_calibracao.py`).
+
 ## v0.12 (2026-11-24) — o gate de plano
 
 - **`orchestrator/plano.py`**: entre o acceptance na base e a implementação, uma fase de plano. O agent

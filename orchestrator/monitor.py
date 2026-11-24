@@ -34,6 +34,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import compat  # noqa: E402 — os nomes antigos das ops de antes de 03/11
 import owner  # noqa: E402 — v0.10, o tempo do owner
 import trajetoria  # noqa: E402 — v0.11
+import calibracao  # noqa: E402 — v0.13/v0.14
 
 OPS = Path(__file__).resolve().parent.parent / "ops"
 LOTE_MAX = 400 * 1024          # bytes por resposta: o navegador não engasga num transcript grande
@@ -131,6 +132,11 @@ def _metrics(d: Path) -> dict:
         m = compat.metrics(json.loads((d / "metrics.json").read_text(encoding="utf-8")))
     except (OSError, ValueError):
         return {}
+    if m.get("veto_sombra") is None:                # v0.14 — parecer de antes do veto em sombra
+        rv, origem = calibracao.parecer_da_op(d, m)
+        veto = calibracao.sombra(rv)
+        if veto:
+            m["veto_sombra"] = {**veto, "retroativo": origem}
     if m.get("trajetoria") is None:                 # v0.11 — run de antes da varredura
         t = _trajetoria_retroativa(d)
         if t is not None:
@@ -416,6 +422,9 @@ def placar() -> dict:
             "divergiu": sum(1 for v in com_gate if v.get("divergencias")), "com_gate": len(com_gate),
             "owner": owner.placar(voos),
             # v0.11 — runs cuja trajetória teve achado, entre os que foram varridos
+            # v0.13/v0.14 — o reviewer medido contra a revisão do owner
+            "veto_sombra": calibracao.comparar([(v.get("veto_sombra"), v.get("review")) for v in voos]),
+            "calibracao": calibracao.placar([v["review_calibration"] for v in voos if v.get("review_calibration")]),
             "trajetoria": {"varridos": sum(1 for v in voos if v.get("trajetoria") is not None),
                            "com_achado": sum(1 for v in voos if v.get("trajetoria"))}}
 
@@ -465,6 +474,8 @@ def aar(m: dict) -> dict:
         "owner": m.get("owner_time"),
         "trajetoria": m.get("trajetoria"),
         "plano": m.get("plan"),
+        "veto": m.get("veto_sombra"),
+        "calibracao": m.get("review_calibration"),
         "trajetoria_retroativa": bool(m.get("trajetoria_retroativa")),
         "relatorio": relatorio[:12000],
     }
@@ -640,6 +651,11 @@ function desenharAar(a){const chave=JSON.stringify(a)+'|'+recusas;if(chave===aar
   +esc({como_veio:'entrou como o agente entregou',consertado:'entrou depois de conserto',descartado:'não entrou'}[rv.desfecho]||rv.desfecho)+'</span>'
   +(rv.commit_alvo?' · <code>'+esc(rv.commit_alvo)+'</code>':'')+(rv.nota?'<div>'+esc(rv.nota)+'</div>':''))
   :'<span class="mut">sem revisão gravada (orchestrator/revisar.py)</span>');
+ const vt=a.veto;if(vt)h+=fato('Veto em sombra (só registra — o veto não está ligado)','<span class="'+(vt.teria_segurado?'mau':'ok')+'">'
+  +(vt.teria_segurado?'teria SEGURADO a entrega':'teria deixado passar')+'</span>'+(vt.retroativo?' <span class="mut">· calculado depois, sobre a '+esc(vt.retroativo)+'</span>':'')
+  +(vt.motivos||[]).map(x=>'<div class="mut">'+esc(x)+'</div>').join('')+'<div class="mut">regra: '+esc(vt.regra||'')+'</div>');
+ const cl=a.calibracao;if(cl)h+=fato('Calibração do reviewer (julgada na revisão)',(cl.achados||[]).map(x=>'<div><b class="'+(x.julgamento==='real'?'ok':x.julgamento==='falso'?'mau':'')+'">'
+  +esc(x.julgamento)+'</b> '+esc(x.problema)+'</div>').join('')+'<div class="mut">perdidos pelo reviewer: '+cl.perdidos+' · por '+esc(cl.por||'')+'</div>');
  const pl=a.plano;if(pl)h+=fato('Gate de plano (antes da implementação)','<div class="'+(pl.fora&&pl.fora.length||pl.acceptance&&pl.acceptance.length?'mau':'ok')+'">'+esc(pl.veredito||'—')+'</div>'
   +(pl.arquivos?'<div class="mut">'+pl.arquivos.map(x=>'<code>'+esc(x)+'</code>').join(' · ')+'</div>':'')
   +(pl.faltam&&pl.faltam.length?'<div class="mut">aviso: o plano não cobre '+esc(pl.faltam.join(', '))+'</div>':'')
@@ -681,6 +697,11 @@ async function placar(){try{const p=await(await fetch('api/placar')).json();cons
   +'<div>custo '+brl(p.custo_total)+' · média '+brl(p.custo_medio)+' · run médio '+(p.voo_medio_min??'—')+' min</div>'
   +(()=>{const o=p.owner||{};return o.ops?'<div>tempo do owner: spec <b>'+o.spec_min+'</b> min ('+o.spec_n+') · revisão <b>'+o.review_min+'</b> min ('+o.review_n+') · agent '+o.agente_min+' min nas mesmas '+o.ops+'</div>'
    :'<div class="mut">tempo do owner: nenhuma op registrou ainda</div>'})()
+  +(()=>{const v=p.veto_sombra||{},c=p.calibracao||{};return v.com_parecer?'<div>veto em sombra: segurou e o owner barrou <b class="ok">'+v.segurou_e_owner_barrou
+   +'</b> · segurou e entrou como veio <b class="mau">'+v.segurou_e_entrou_como_veio+'</b> · deixou e o owner barrou <b class="mau">'+v.deixou_e_owner_barrou
+   +'</b> · deixou e entrou como veio '+v.deixou_e_entrou_como_veio+(v.sem_revisao?' · sem revisão '+v.sem_revisao:'')+'</div>':''})()
+  +(()=>{const c=p.calibracao||{};return c.julgados?'<div>reviewer: precisão <b>'+Math.round(100*c.precisao)+'%</b> ('+c.julgados+' achados julgados) · cobertura '
+   +(c.cobertura==null?'—':Math.round(100*c.cobertura)+'%')+' ('+c.perdidos+' perdido(s)) em '+c.ops+' ops</div>':'<div class="mut">reviewer: nenhuma calibração julgada ainda</div>'})()
   +(()=>{const t=p.trajetoria||{};return t.varridos?'<div>trajetória com achado: <b class="'+(t.com_achado?'mau':'ok')+'">'+t.com_achado+'</b> de '+t.varridos+' varridos</div>':''})()}catch(e){}}
 async function ops(){placar();try{const r=await fetch('api/ops');ultimas=await r.json();
  if(!fixo&&ultimas.length){const a=(ultimas.find(o=>o.em_voo)||ultimas[0]).op;if(a!==op)trocar(a)}desenhar(ultimas);

@@ -29,6 +29,7 @@ Revisão de um commit já gravado (grava `ops/<op>/reviewer-calibracao.json`):
 Stdlib apenas.
 """
 import argparse
+import fnmatch
 import json
 import os
 import re
@@ -54,6 +55,14 @@ TIMEOUT_S = 600
 LIMITE_DIFF = 600_000          # caracteres; o modelo aceita ~1M tokens, mas o custo cresce junto
 VEREDITOS = ("APROVA", "RESSALVA", "REPROVA")
 SEVERIDADES = ("alta", "media", "baixa")
+# v0.13 — o REVIEW.md do target, a profundidade por risco e os passes do playbook
+PASSES = ("bugs", "seguranca", "spec")
+PASSE_TEXTO = {"bugs": "bugs e regra de negócio: o código faz o que a spec quer, não só o que os testes afirmam.",
+               "seguranca": "segurança: autorização, escopo de dados entre usuários ou clientes, segredo, entrada não confiável.",
+               "spec": "aderência: cada requirement da spec, cada guardrail do target, os desvios que o diff mostra."}
+RISCO = {"baixo": "rapido", "medio": "padrao", "alto": "fundo"}
+LINHAS_RAPIDO = 80
+LIMITE_DETALHES = 5
 
 # Ordem importa: o CNJ (20 dígitos) antes do CNPJ (14), e este antes do CPF (11), para o padrão
 # menor não comer um pedaço do maior. Mascarar a mais é barato; mascarar a menos é o vazamento.
@@ -78,9 +87,11 @@ ESQUEMA = {
             "items": {
                 "type": "object",
                 "additionalProperties": False,
-                "required": ["severidade", "arquivo", "linha", "problema", "por_que"],
+                "required": ["severidade", "critico", "passe", "arquivo", "linha", "problema", "por_que"],
                 "properties": {
                     "severidade": {"type": "string", "enum": list(SEVERIDADES)},
+                    "critico": {"type": "boolean"},
+                    "passe": {"type": "string", "enum": list(PASSES)},
                     "arquivo": {"type": "string"},
                     "linha": {"type": "integer"},
                     "problema": {"type": "string"},
@@ -108,6 +119,11 @@ spec ou a trava quando for o caso. Sem achado, a lista fica vazia. Veredito: APR
 RESSALVA (corrigir antes do merge, mas a entrega serve), REPROVA (não faz o que foi pedido).
 Marcadores como <CNJ>, <CNPJ>, <CPF> e <EMAIL> são dados mascarados de propósito, não defeito.
 Escreva em português."""
+
+INSTRUCAO_V013 = """O REVIEW.md do repositório, abaixo da spec, diz o que é CRÍTICO ali e o que é DETALHE.
+Marque `critico: true` só no achado que cai numa categoria da seção Crítico; o resto é `false`. Diga em
+`passe` de qual passe o achado saiu (bugs, seguranca, spec). Detalhe é para ser pouco: o achado que
+importa não pode se perder numa lista."""
 
 
 def mascarar(texto: str) -> tuple[str, dict]:
@@ -168,7 +184,8 @@ def diff_do_commit(repo, sha: str) -> str:
     return out
 
 
-def montar_pedido(modelo: str, opord: str, travas: str, diff: str, gate: dict | None) -> tuple[dict, dict]:
+def montar_pedido(modelo: str, opord: str, travas: str, diff: str, gate: dict | None, *,
+                  review: str = "", instrucao: str | None = None) -> tuple[dict, dict]:
     """O corpo do pedido ao OpenRouter, já mascarado. Devolve (corpo, info) — info diz o que foi
     mascarado e se o diff foi cortado. O relatório do agente não entra."""
     cortado = len(diff) > LIMITE_DIFF
@@ -177,6 +194,7 @@ def montar_pedido(modelo: str, opord: str, travas: str, diff: str, gate: dict | 
     numeros = ", ".join(f"{k} {v}" for k, v in (gate or {}).items()) or "sem resumo"
     conteudo = ("# spec (o pedido)\n\n" + opord
                 + "\n\n# TRAVAS DO REPOSITÓRIO\n\n" + (travas or "(nenhuma declarada)")
+                + ("\n\n# REVIEW.md DO REPOSITÓRIO (o que é crítico aqui)\n\n" + review if review else "")
                 + f"\n\n# PORTÃO AUTOMÁTICO\n\nPassou: {numeros}."
                 + ("\n\n⚠️ O diff abaixo foi CORTADO no limite de tamanho; diga isso no resumo."
                    if cortado else "")
@@ -184,7 +202,7 @@ def montar_pedido(modelo: str, opord: str, travas: str, diff: str, gate: dict | 
     conteudo, mascarados = mascarar(conteudo)
     corpo = {
         "model": modelo,
-        "messages": [{"role": "system", "content": INSTRUCAO},
+        "messages": [{"role": "system", "content": instrucao or INSTRUCAO},
                      {"role": "user", "content": conteudo}],
         "response_format": {"type": "json_schema",
                             "json_schema": {"name": "parecer", "strict": True, "schema": ESQUEMA}},
@@ -214,7 +232,9 @@ def ler_parecer(resposta: dict) -> dict:
     for a in p.get("achados") or []:
         if not isinstance(a, dict) or a.get("severidade") not in SEVERIDADES:
             raise ValueError(f"achado fora do esquema: {str(a)[:200]}")
-        achados.append({"severidade": a["severidade"], "arquivo": str(a.get("arquivo", "")),
+        achados.append({"severidade": a["severidade"], "critico": bool(a.get("critico")),
+                        "passe": a.get("passe") if a.get("passe") in PASSES else None,
+                        "arquivo": str(a.get("arquivo", "")),
                         "linha": int(a.get("linha") or 0), "problema": str(a.get("problema", "")),
                         "por_que": str(a.get("por_que", ""))})
     return {"veredito": p["veredito"], "resumo": str(p.get("resumo", "")), "achados": achados}
@@ -271,21 +291,9 @@ def _chamar_sem_429(chamador, corpo: dict, chave: str) -> dict:
         return {"error": {"message": f"HTTP 429 — {detalhe}"}}
 
 
-def revisar(modelo: str, opord: str, travas: str, diff: str, gate: dict | None = None,
-            *, chave: str | None = None, chamador=chamar, esperar=time.sleep) -> dict:
-    """Pede o parecer. Nunca levanta: o revisor que falha não derruba o voo, e o motivo fica gravado
-    em `estado`. `chamador` é o seam dos testes."""
-    t0 = time.monotonic()
-    r = {"modelo": modelo}
-    if not diff.strip():
-        r["estado"] = "sem diff"
-        return r
-    chave = chave if chave is not None else _env().get("E9_REVISOR_KEY", "")
-    if not chave:
-        r["estado"] = "sem chave"
-        return r
-    corpo, info = montar_pedido(modelo, opord, travas, diff, gate)
-    r.update(info)
+def _um_pedido(r: dict, corpo: dict, chave: str, chamador, esperar) -> dict:
+    """Um pedido ao provedor, com a repetição da sobrecarga. Devolve o parecer lido, ou {"estado": ...}
+    com o motivo da falha. Acumula custo e tentativas em `r`."""
     try:
         resposta = _chamar_sem_429(chamador, corpo, chave)
         for espera in ESPERAS_SOBRECARGA_S:
@@ -294,22 +302,131 @@ def revisar(modelo: str, opord: str, travas: str, diff: str, gate: dict | None =
             r["tentativas"] = r.get("tentativas", 1) + 1
             esperar(espera)
             resposta = _chamar_sem_429(chamador, corpo, chave)
-        r.update(ler_parecer(resposta))
+        p = ler_parecer(resposta)
         uso = resposta.get("usage") or {}
-        r["custo"] = uso.get("cost")
-        r["tokens"] = {"entrada": uso.get("prompt_tokens"), "saida": uso.get("completion_tokens")}
+        if isinstance(uso.get("cost"), (int, float)):
+            r["custo"] = round((r.get("custo") or 0) + uso["cost"], 6)
+        tok = r.setdefault("tokens", {"entrada": 0, "saida": 0})
+        tok["entrada"] = (tok["entrada"] or 0) + (uso.get("prompt_tokens") or 0)
+        tok["saida"] = (tok["saida"] or 0) + (uso.get("completion_tokens") or 0)
         r["provedor"] = resposta.get("provider")
-        r["estado"] = "ok"
+        return p
     except urllib.error.HTTPError as e:
         try:
             detalhe = json.loads(e.read() or b"{}").get("error", {}).get("message", "")
         except Exception:                        # noqa: BLE001
             detalhe = ""
-        r["estado"] = f"indisponível: HTTP {e.code}" + (f" — {detalhe[:160]}" if detalhe else "")
+        return {"estado": f"indisponível: HTTP {e.code}" + (f" — {detalhe[:160]}" if detalhe else "")}
     except Exception as e:                       # noqa: BLE001 — qualquer falha vira registro
-        r["estado"] = f"indisponível: {type(e).__name__}: {str(e)[:160]}"
+        return {"estado": f"indisponível: {type(e).__name__}: {str(e)[:160]}"}
+
+
+_PIOR = {"APROVA": 0, "RESSALVA": 1, "REPROVA": 2}
+
+
+def revisar(modelo: str, opord: str, travas: str, diff: str, gate: dict | None = None,
+            *, chave: str | None = None, chamador=chamar, esperar=time.sleep,
+            review: dict | None = None, profundidade: str = "padrao") -> dict:
+    """Pede o parecer. Nunca levanta: o revisor que falha não derruba o voo, e o motivo fica gravado
+    em `estado`. `chamador` é o seam dos testes.
+
+    v0.13: `review` é o REVIEW.md do target (`ler_review_md`), que diz o que é crítico e o limite de
+    detalhes; `profundidade` é rapido (um pedido, bugs e aderência, até 3 achados), padrao (um pedido,
+    os três passes) ou fundo (um pedido por passe, e o veredito é o pior dos três)."""
+    t0 = time.monotonic()
+    review = review or {"texto": "", "limite": LIMITE_DETALHES, "nome": None}
+    r = {"modelo": modelo, "profundidade": profundidade, "review_md": review.get("nome")}
+    if not diff.strip():
+        r["estado"] = "sem diff"
+        return r
+    chave = chave if chave is not None else _env().get("E9_REVISOR_KEY", "")
+    if not chave:
+        r["estado"] = "sem chave"
+        return r
+    passes = PASSES if profundidade == "fundo" else (None,)
+    pareceres, falhas = [], []
+    for passe in passes:
+        corpo, info = montar_pedido(modelo, opord, travas, diff, gate, review=review.get("texto", ""),
+                                    instrucao=instrucao(profundidade, passe))
+        r.update(info)
+        p = _um_pedido(r, corpo, chave, chamador, esperar)
+        (falhas if "estado" in p else pareceres).append(p if "estado" in p else {**p, "passe_pedido": passe})
+    if not pareceres:
+        r["estado"] = falhas[0]["estado"]
+    else:
+        achados = []
+        for p in pareceres:
+            for a in p["achados"]:
+                if p.get("passe_pedido"):
+                    a["passe"] = p["passe_pedido"]
+                achados.append(a)
+        limite = 3 if profundidade == "rapido" else review.get("limite", LIMITE_DETALHES)
+        r["achados"], r["detalhes_cortados"] = cortar_detalhes(achados, limite)
+        r["veredito"] = max((p["veredito"] for p in pareceres), key=_PIOR.get)
+        r["resumo"] = " · ".join(p["resumo"] for p in pareceres if p.get("resumo"))
+        r["estado"] = "ok" if not falhas else f"parcial: {len(pareceres)} de {len(passes)} passes"
     r["duracao_s"] = round(time.monotonic() - t0, 1)
     return r
+
+
+def cortar_detalhes(achados: list[dict], limite: int) -> tuple[list[dict], int]:
+    """Crítico e severidade alta ficam sempre; dos outros, os `limite` mais graves. O playbook manda
+    limitar o detalhe: lista longa de detalhe esconde o achado que importa."""
+    ordem = {s: i for i, s in enumerate(SEVERIDADES)}
+    fixos = [a for a in achados if a.get("critico") or a["severidade"] == "alta"]
+    resto = sorted((a for a in achados if a not in fixos), key=lambda a: ordem.get(a["severidade"], 9))
+    return fixos + resto[:max(0, limite)], max(0, len(resto) - max(0, limite))
+
+
+def ler_review_md(path) -> dict:
+    """O REVIEW.md do target: o texto inteiro (vai ao reviewer), o limite de detalhes e os caminhos
+    sensíveis (globs entre crases da seção `## Caminhos sensíveis`)."""
+    path = Path(path)
+    texto = path.read_text(encoding="utf-8") if path.exists() else ""
+    m = re.search(r"Limite de detalhes:\s*(\d+)", texto)
+    sec = re.search(r"^##\s*Caminhos sensíveis\s*$(.*?)(?=^#{1,2}\s|\Z)", texto, re.MULTILINE | re.DOTALL)
+    return {"nome": path.name if texto else None, "texto": texto,
+            "limite": int(m.group(1)) if m else LIMITE_DETALHES,
+            "sensiveis": re.findall(r"`([^`]+)`", sec.group(1)) if sec else []}
+
+
+def arquivos_do_diff(diff: str) -> list[str]:
+    return list(dict.fromkeys(re.findall(r"^diff --git a/\S+ b/(\S+)", diff, re.MULTILINE)))
+
+
+def linhas_mudadas(diff: str) -> int:
+    return sum(1 for ln in diff.splitlines()
+               if (ln.startswith("+") or ln.startswith("-")) and not ln.startswith(("+++", "---")))
+
+
+def profundidade_de(cfg: dict, diff: str, review: dict) -> tuple[str, str]:
+    """(profundidade, motivo). O owner declara o risco no op.json (`"risk": "baixo|medio|alto"`); sem
+    ele, decide o tamanho: até LINHAS_RAPIDO linhas mudadas e nenhum caminho sensível do REVIEW.md é
+    rápido, o resto é padrão. Fundo só por declaração: são três pedidos."""
+    risco = cfg.get("risk")
+    if risco in RISCO:
+        return RISCO[risco], f"risco {risco} declarado no op.json"
+    n = linhas_mudadas(diff)
+    tocados = [a for a in arquivos_do_diff(diff)
+               if any(fnmatch.fnmatch(a, g) or fnmatch.fnmatch("/" + a, "*/" + g.lstrip("*/")) for g in review.get("sensiveis", []))]
+    if tocados:
+        return "padrao", f"toca caminho sensível do REVIEW.md: {', '.join(tocados[:3])}"
+    if n <= LINHAS_RAPIDO:
+        return "rapido", f"{n} linhas mudadas, nenhum caminho sensível"
+    return "padrao", f"{n} linhas mudadas"
+
+
+def instrucao(profundidade: str, passe: str | None = None) -> str:
+    """A instrução do pedido: a base, mais o que muda com a profundidade e o passe."""
+    if profundidade == "rapido":
+        extra = ("PASSE RÁPIDO: a mudança é pequena. Olhe só os passes 1 (bugs e regra de negócio) e 3 "
+                 "(aderência à spec e aos guardrails), e devolva no máximo 3 achados.")
+    elif passe:
+        extra = f"PASSE FUNDO, só o passe {passe!r}: " + PASSE_TEXTO[passe] + " Ignore os outros dois."
+    else:
+        extra = "Faça os três passes, nesta ordem: " + " ".join(
+            f"({i}) {PASSE_TEXTO[p]}" for i, p in enumerate(PASSES, 1))
+    return INSTRUCAO + "\n\n" + extra + "\n\n" + INSTRUCAO_V013
 
 
 def ligado(cfg: dict) -> bool:
@@ -335,8 +452,13 @@ def main(argv=None) -> int:
     gate = (json.loads((op / "metrics.json").read_text(encoding="utf-8")).get("gate")
             if (op / "metrics.json").exists() else None)
     modelo = a.modelo or modelo_de(cfg)
-    r = revisar(modelo, compat.spec_path(op).read_text(encoding="utf-8"), travas,
-                diff_do_commit(a.repo, a.commit), gate)
+    rmd = RAIZ / "targets" / f"{cfg['target']}.review.md" if cfg.get("target") else None
+    review = ler_review_md(rmd if rmd and rmd.exists() else RAIZ / "process" / "REVIEW-template.md")
+    diff = diff_do_commit(a.repo, a.commit)
+    prof, motivo = profundidade_de(cfg, diff, review)
+    r = revisar(modelo, compat.spec_path(op).read_text(encoding="utf-8"), travas, diff, gate,
+                review=review, profundidade=prof)
+    r["motivo_profundidade"] = motivo
     r["commit"] = a.commit
     saida = op / "reviewer-calibracao.json"
     todos = json.loads(saida.read_text(encoding="utf-8")) if saida.exists() else []

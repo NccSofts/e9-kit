@@ -57,7 +57,11 @@ Só o rc 0 entrega alguma coisa, e o que ele entrega é uma branch para revisão
 | 4 | commit | gate verde, mas a árvore testada não é a que seria commitada (arquivo fora do escopo) |
 | 0 | entrega | gate verde, acceptance cumprido, commit na `feat/*`, sem push — vai para revisão |
 
-O AI code review, a varredura da trajetória e o veto em sombra **não** têm código: só informam.
+O AI code review, a varredura da trajetória e o veto em sombra **não** têm código: só informam. O veto
+em sombra (v0.14) registra o que o reviewer teria segurado — veredito REPROVA ou achado crítico pelo
+`REVIEW.md` do target — e o dashboard o compara com o que o owner barrou. Ligar o veto de verdade é
+decisão do owner, depois dos números: vetar é a direção segura, aprovar seria a perigosa, e o reviewer
+nunca aprova nada.
 
 > **ALWAYS:** branch · árvore sempre buildável · relatório com desvios · reporta bloqueio.
 > **NEVER:** push · merge · produção · segredo · outro repositório · dado real · `git add -A`.

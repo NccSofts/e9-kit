@@ -189,7 +189,14 @@ ssh -N -L 8417:127.0.0.1:8417 usuario@servidor     # e abra http://127.0.0.1:841
    A sua aplicação precisa ler a URL do banco do ambiente antes de qualquer `.env`.
 7. **AI code review (opcional):** ponha `E9_REVISOR_KEY=<chave do OpenRouter>` num `.env` na raiz
    do kit (fora do git). Sem chave, o run grava "sem chave" e segue; `"reviewer": false` no
-   `op.json` o desliga, e `"reviewer": {"modelo": "..."}` troca o modelo.
+   `op.json` o desliga, e `"reviewer": {"modelo": "..."}` troca o modelo. Desde a v0.13, escreva
+   `targets/<nome>.review.md` (modelo em `process/REVIEW-template.md`, exemplo em
+   `targets/exemplo.review.md`): o que é crítico no seu repositório, o limite de detalhes e os caminhos
+   sensíveis. `"risk": "baixo|medio|alto"` no `op.json` escolhe a profundidade (rápido, padrão, fundo);
+   sem ele, decide o tamanho do diff. Na revisão, `revisar.py --calibrar "1=real,2=falso" --perdidos N`
+   mede quanto o reviewer acerta, e o Monitor mostra o veto em sombra: o que ele teria segurado, ao
+   lado do que você barrou. O veto não segura nada; ligar um veto de verdade é decisão sua, depois dos
+   números.
 8. **Tempo do owner (v0.10):** anote quanto a spec levou em `"owner": {"spec_min": 25}` e, ao
    revisar, `revisar.py --op ops/<nome> --como-veio --revisao-min 12`. O Monitor soma os dois ao lado
    dos minutos de agent: é o número que mostra se o gargalo está mesmo nas pontas.

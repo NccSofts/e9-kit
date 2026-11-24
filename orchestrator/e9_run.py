@@ -44,6 +44,7 @@ import compat  # noqa: E402 — os nomes antigos das ops de antes da v0.9
 import owner  # noqa: E402 — v0.10, o tempo do owner
 import trajetoria  # noqa: E402 — v0.11, o caminho do agent
 import plano  # noqa: E402 — v0.12, o gate de plano
+import calibracao  # noqa: E402 — v0.13/v0.14, o reviewer medido e o veto em sombra
 
 # Console em UTF-8 (Windows usa cp1252 por default e engasga em ─ · ←).
 try:
@@ -879,6 +880,7 @@ def write_aar(op_dir: Path, op_id, results: dict):
     if m.get("result_text"):
         lines += ["## Relatório do agente (verbatim — desvios declarados, policy §7)", "",
                   m["result_text"], ""]
+    lines += calibracao.linhas(results.get("veto_sombra"), results.get("review_calibration"))   # v0.13/14
     lines += plano.linhas(results.get("plan"))                          # v0.12
     lines += trajetoria.linhas(results.get("trajetoria"))                # v0.11
     if results.get("gate") is not None:
@@ -929,9 +931,15 @@ def write_aar(op_dir: Path, op_id, results: dict):
                       + (f" · mascarados: {mascara}" if mascara else "")
                       + (" · ⚠️ diff cortado no limite" if rv.get("diff_cortado") else "") + ".",
                       f"- {rv.get('resumo', '')}"]
-            lines += [f"- [{a['severidade']}] `{a['arquivo']}:{a['linha']}` — {a['problema']} "
-                      f"*Por quê:* {a['por_que']}" for a in rv.get("achados") or []] or [
-                "- Nenhum achado."]
+            if rv.get("profundidade"):                                     # v0.13
+                lines.append(f"- Profundidade: **{rv['profundidade']}** ({rv.get('motivo_profundidade', '')})"
+                             + (f" · REVIEW.md: `{rv['review_md']}`" if rv.get("review_md") else "")
+                             + (f" · {rv['detalhes_cortados']} detalhe(s) cortado(s) no limite"
+                                if rv.get("detalhes_cortados") else "") + ".")
+            lines += [f"{i}. [{a['severidade']}{' · CRÍTICO' if a.get('critico') else ''}"
+                      f"{' · ' + a['passe'] if a.get('passe') else ''}] `{a['arquivo']}:{a['linha']}` — "
+                      f"{a['problema']} *Por quê:* {a['por_que']}"
+                      for i, a in enumerate(rv.get("achados") or [], 1)] or ["- Nenhum achado."]
         else:
             lines.append(f"- {rv.get('estado')}.")
         lines.append("")
@@ -1027,7 +1035,15 @@ def review_entrega(cfg, opord: Path, alvo: Path | None, base: str | None, gate: 
             return {"estado": "indisponível: base da entrega desconhecida"}
         diff = mod.diff_da_worktree(cfg["worktree"], base, cfg.get("worktree_link", []))
         travas = alvo.read_text(encoding="utf-8") if alvo else ""
-        return mod.revisar(mod.modelo_de(cfg), opord.read_text(encoding="utf-8"), travas, diff, gate)
+        # v0.13 — o REVIEW.md do target diz o que é crítico; sem ele, o modelo genérico do process/
+        rmd = (TARGETS_DIR / f"{cfg['target']}.review.md") if cfg.get("target") else None
+        review = mod.ler_review_md(rmd if rmd and rmd.exists() else
+                                   Path(__file__).resolve().parent.parent / "process" / "REVIEW-template.md")
+        prof, motivo = mod.profundidade_de(cfg, diff, review)
+        r = mod.revisar(mod.modelo_de(cfg), opord.read_text(encoding="utf-8"), travas, diff, gate,
+                        review=review, profundidade=prof)
+        r["motivo_profundidade"] = motivo
+        return r
     except Exception as e:                       # noqa: BLE001 — revisor nunca derruba o voo
         return {"estado": f"indisponível: {type(e).__name__}: {str(e)[:160]}"}
 
@@ -1374,6 +1390,10 @@ def _voar(cfg, op_dir, op_id, opord, alvo, aceite, brief, estado):
         fase("reviewer")
         results["reviewer"] = review_entrega(cfg, opord, alvo, base, results["gate"])
         rv = results["reviewer"]
+        results["veto_sombra"] = calibracao.sombra(rv)                  # v0.14 — só registra
+        if results["veto_sombra"]:
+            log("VETO", "sombra: " + ("teria segurado" if results["veto_sombra"]["teria_segurado"]
+                                       else "teria deixado passar"))
         log("REV", f"{rv.get('veredito') or rv.get('estado')}"
             + (f" · {len(rv['achados'])} achado(s)" if rv.get("achados") is not None else ""))
 

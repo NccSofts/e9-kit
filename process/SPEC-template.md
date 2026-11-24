@@ -57,6 +57,11 @@ Uma linha para **cada** guardrail do target: `[ID] aplica: como` ou `[ID] não s
 O `e9_run.py` recusa a op se faltar um. Quando uma ordem desta spec contradiz um guardrail, é aqui
 que isso aparece — antes do run, e não no gate.
 
+### Risco (v0.13)
+`"risk": "baixo" | "medio" | "alto"` no `op.json` escolhe a profundidade do AI code review (rápido,
+padrão, fundo). Sem a chave, decide o tamanho do diff e os caminhos sensíveis do `REVIEW.md` do target.
+Regra de negócio ou segurança: declare `alto`.
+
 ### Plano (v0.12)
 O run começa por uma fase de plano: o agent lê, não edita, e devolve a lista de arquivos que vai tocar.
 Arquivo fora de `expected_artifacts`/`optional_artifacts` para o run com rc 13, antes da implementação.
