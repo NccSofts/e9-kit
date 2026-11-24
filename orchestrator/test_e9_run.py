@@ -80,7 +80,8 @@ def blocks():
 def _mk_op(over):
     base = {"op": "t", "target_repo": "/srv/repos/projeto", "branch": "feat/ok",
             "worktree": "/tmp/w", "operator": {"cmd_template": "echo"},
-            "gate": {"test_cmd": "true"}, "expected_artifacts": ["a.py"]}
+            "gate": {"test_cmd": "true"}, "expected_artifacts": ["a.py"],
+            "plan_gate": False}       # v0.12: o gate de plano tem os testes dele (test_plano.py)
     d = Path(tempfile.mkdtemp())
     (d / "spec.md").write_text("x", encoding="utf-8")
     (d / "op.json").write_text(json.dumps({**base, **over}), encoding="utf-8")

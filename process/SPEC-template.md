@@ -57,6 +57,12 @@ Uma linha para **cada** guardrail do target: `[ID] aplica: como` ou `[ID] não s
 O `e9_run.py` recusa a op se faltar um. Quando uma ordem desta spec contradiz um guardrail, é aqui
 que isso aparece — antes do run, e não no gate.
 
+### Plano (v0.12)
+O run começa por uma fase de plano: o agent lê, não edita, e devolve a lista de arquivos que vai tocar.
+Arquivo fora de `expected_artifacts`/`optional_artifacts` para o run com rc 13, antes da implementação.
+Por isso o escopo do `op.json` tem de ser o escopo de verdade: se a intent pode pedir um arquivo a mais,
+ele entra nos opcionais. `"plan_gate": false` desliga, para op que não precisa (um smoke).
+
 ### 4. Support
 Custo e recursos: teto de tempo e modelo, dependências para subir (banco do run, `.env`) e os
 artefatos a entregar (branch com commit, relatório do agent, arquivos gerados).

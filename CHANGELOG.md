@@ -2,6 +2,20 @@
 
 As versões do kit, da mais nova para a mais antiga. As mudanças de comportamento vêm com o motivo, porque cada uma nasceu de uma falha medida.
 
+## v0.12 (2026-11-24) — o gate de plano
+
+- **`orchestrator/plano.py`**: entre o acceptance na base e a implementação, uma fase de plano. O agent
+  recebe o briefing com a instrução de só ler e terminar com `{"arquivos": [...]}`. O run para com
+  **rc 13** se a worktree mudou durante o plano, se o plano não veio legível, se um arquivo sai de
+  `expected_artifacts`/`optional_artifacts`, ou se o plano inclui acceptance test. O padrão obrigatório
+  que o plano esquece só avisa, porque o commit ainda o cobra.
+- **A implementação retoma a sessão do plano** (`claude --resume <id> -p`): o recon não se paga duas
+  vezes. Sem `claude -p` no `cmd_template`, começa nova, com o plano anexado ao briefing.
+- Ligado por padrão; `"plan_gate": false` desliga, e `agent.plan_timeout_s` (20 min) é o teto. O Monitor
+  ganha o rótulo PLANO, o bloco do plano e o log ao vivo da fase de plano.
+- **`process/POLICY.md` ganha a tabela de todos os códigos de saída**, na ordem em que acontecem.
+- 11 casos novos (`test_plano.py`).
+
 ## v0.11 (2026-11-24) — o caminho do agent, não só o fim
 
 - **`orchestrator/trajetoria.py`**: varre o `agent.jsonl`, sem modelo, atrás de cinco padrões que

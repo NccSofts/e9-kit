@@ -21,7 +21,8 @@
    limpo. Vermelho = parar.
 7. **Outcome-based spec — fixo no resultado, livre nos meios.** A intent, o estado final e a policy
    são **FIXOS**. Os **MEIOS** — estrutura, em qual módulo um arquivo mora, como implementar — são
-   do agent. Mas desvio do que a spec sugeriu **tem de ser declarado** (na seção `## Desvios da
+   do agente, e o agente diz quais arquivos vai tocar **antes** de tocar (o gate de plano, v0.12: fora
+   do escopo é rc 13). Mas desvio do que a spec sugeriu **tem de ser declarado** (na seção `## Desvios da
    spec` do relatório). Iniciativa silenciosa é proibida; iniciativa declarada dentro da intent é o
    esperado. O agent **não** produz run report nem métricas (isso é do E-9). Em dúvida sobre a
    intent: escalate.
@@ -33,6 +34,30 @@
     push**, espera o owner.
 
 ---
+
+## Onde um run para — os códigos de saída
+
+Cada jeito de parar tem o seu código, na ordem em que acontece; de manhã o número já diz onde olhar.
+Só o rc 0 entrega alguma coisa, e o que ele entrega é uma branch para revisão, nunca um deploy.
+
+| rc | Onde | O que quer dizer |
+|---|---|---|
+| 1 | contrato | a spec ou o `op.json` não passam na validação (policy, guardrails, traceability, owner) — nada foi tocado |
+| 11 | trava | a mesma op já está em run, ou nenhum slot desocupou dentro do teto |
+| 2 | worktree | não deu para cortar a worktree do target |
+| 12 | banco do run | o Postgres do run não ficou pronto |
+| 8 | baseline | a worktree não estava limpa antes do run |
+| 7 | baseline | o gate já falha no `main`, antes do agent |
+| 9 | acceptance | os acceptance tests não falham na base (já passam, ou nem rodam como teste) |
+| 13 | **plano (v0.12)** | o plano do agent saiu do escopo do commit, incluiu acceptance test, não veio legível, ou o agent mexeu na worktree durante ele — **antes** da implementação |
+| 6 | agent | o agent terminou em erro (`is_error`, login vencido) |
+| 5 | agent | o agent estourou o teto de tempo |
+| 10 | acceptance | o agent mexeu num acceptance test, ou eles não passaram inteiros depois |
+| 3 | gate | o quality gate reprovou a entrega (ou pulou mais testes que a baseline) |
+| 4 | commit | gate verde, mas a árvore testada não é a que seria commitada (arquivo fora do escopo) |
+| 0 | entrega | gate verde, acceptance cumprido, commit na `feat/*`, sem push — vai para revisão |
+
+O AI code review, a varredura da trajetória e o veto em sombra **não** têm código: só informam.
 
 > **ALWAYS:** branch · árvore sempre buildável · relatório com desvios · reporta bloqueio.
 > **NEVER:** push · merge · produção · segredo · outro repositório · dado real · `git add -A`.

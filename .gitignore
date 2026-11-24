@@ -15,6 +15,9 @@ ops/*/operator.jsonl
 ops/*/overwatch.log
 ops/*/baseline.log
 ops/*/_brief.txt
+ops/*/_plan_brief.txt
+ops/*/_impl_brief.txt
+ops/*/plan.jsonl
 ops/*/acceptance-*.log
 ops/*/aceite-*.log
 ops/*/fases.json

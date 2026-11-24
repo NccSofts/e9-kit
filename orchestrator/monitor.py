@@ -78,6 +78,8 @@ DESFECHOS = {
              "o agente nem foi chamado"),
     "falha": ("FALHA", None, "o agente terminou em erro ou estourou o teto de tempo"),
     "vermelho": ("VERMELHO", 3, "o gate (quality gate) reprovou a entrega — ler o fim do gate e os desvios"),
+    "plano": ("PLANO", 13, "o gate de plano parou o run antes da implementação: o plano saiu do escopo, "
+              "não veio, ou o agent mexeu na worktree durante ele"),
     "barrada": ("BARRADA", 4, "gate verde, mas a árvore testada não é a que seria commitada: "
                 "arquivo alterado fora do escopo"),
     "abort": ("ABORT", None, "a op parou antes do fim"),
@@ -97,6 +99,8 @@ def classificar(status: str | None, voando: bool = False, rc: int | None = None)
         chave = "sem"
     elif s.startswith("ok"):
         chave = "verde"
+    elif "(plano)" in s:
+        chave = "plano"
     elif "aceite" in s:
         chave = "aceite"
     elif "linha de base" in s or "não está limpa" in s:
@@ -117,7 +121,7 @@ def classificar(status: str | None, voando: bool = False, rc: int | None = None)
     return {"classe": chave, "rotulo": rotulo, "rc": rc, "significado": significado}
 
 
-_ARQUIVOS_DA_OP = ("agent.jsonl", "operator.jsonl", "metrics.json", "baseline.log",
+_ARQUIVOS_DA_OP = ("agent.jsonl", "plan.jsonl", "operator.jsonl", "metrics.json", "baseline.log",
                    "acceptance-base.log", "aceite-base.log", "gate.log", "overwatch.log",
                    "acceptance-entrega.log", "aceite-entrega.log")
 
@@ -192,6 +196,7 @@ _FASES = (("baseline.log", "linha de base (baseline): o gate no main, antes do a
 _TEXTO_FASE = {"preparo": "conferindo a worktree", "base": _FASES[0][1], "aceite_base": _FASES[1][1],
                "agente": _FASES[2][1], "operador": _FASES[2][1], "gate": _FASES[3][1], "aceite_entrega": _FASES[4][1],
                "reviewer": "AI code review de outro modelo lendo a entrega",
+               "plano": "gate de plano: o agent lê e diz que arquivos vai tocar, sem editar",
                "commit": "commit na branch (só os arquivos do escopo)", "fim": "gravando o run report"}
 
 
@@ -308,7 +313,15 @@ def _ts_da_linha(ln: str) -> str | None:
     return ts if isinstance(ts, str) and _TS_OK.match(ts) else None
 
 
-def ler_feed(pasta: Path, pos: int, ts: str | None = None) -> dict:
+def _transcript(pasta: Path) -> Path:
+    """O transcript que está sendo escrito: a implementação, senão o plano (v0.12), senão o nome antigo."""
+    for nome in ("agent.jsonl", "plan.jsonl", "operator.jsonl"):
+        if (pasta / nome).exists():
+            return pasta / nome
+    return pasta / "agent.jsonl"
+
+
+def ler_feed(pasta: Path, pos: int, ts: str | None = None, arq: str | None = None) -> dict:
     """Eventos novos a partir do byte `pos`. Só consome linha inteira (a última pode estar sendo
     escrita); devolve a posição seguinte e, terminada a op, o status do harness.
 
@@ -316,9 +329,9 @@ def ler_feed(pasta: Path, pos: int, ts: str | None = None) -> dict:
     ação e a fala do agente não. Cada evento sem hora herda a última vista — a do resultado
     anterior, o instante em que o agente retomou —, e ela atravessa os lotes pelo `ts` que o
     navegador devolve na pergunta seguinte."""
-    jl = pasta / "agent.jsonl"
-    if not jl.exists():                # op de antes de 03/11
-        jl = pasta / "operator.jsonl"
+    jl = _transcript(pasta)
+    if arq is not None and arq != jl.name:   # v0.12: o plano acabou e a implementação começou noutro arquivo
+        pos, ts = 0, None
     evs: list[dict] = []
     novo = pos
     ultimo = ts if ts and _TS_OK.match(ts) else None
@@ -346,7 +359,7 @@ def ler_feed(pasta: Path, pos: int, ts: str | None = None) -> dict:
         pass
     voando = pasta.name in em_voo()
     m = _metrics(pasta)               # o harness grava ao fim; num re-run, é o do run anterior
-    return {"eventos": evs, "pos": novo, "ts": ultimo, "uso": uso, "em_voo": voando,
+    return {"eventos": evs, "pos": novo, "ts": ultimo, "uso": uso, "em_voo": voando, "arquivo": jl.name,
             "fase": fase_atual(pasta) if voando else None,
             "aar": aar(m) if m and not voando else None}
 
@@ -378,8 +391,10 @@ def placar() -> dict:
         if m.get("status") and not _treino(d):
             voos.append(m)
     n = len(voos)
-    custos = [v["agent"]["total_cost_usd"] for v in voos
-              if (v.get("agent") or {}).get("total_cost_usd") is not None]
+    # o custo do run inclui a fase de plano (v0.12), quando houve
+    custos = [((v.get("agent") or {}).get("total_cost_usd") or 0) + ((v.get("plan") or {}).get("custo") or 0)
+              for v in voos if (v.get("agent") or {}).get("total_cost_usd") is not None
+              or (v.get("plan") or {}).get("custo") is not None]
     tempos = [v["wall_clock_s"] for v in voos if v.get("wall_clock_s")]
     com_gate = [v for v in voos if v.get("gate") is not None]
     rot: dict[str, int] = {}
@@ -449,6 +464,7 @@ def aar(m: dict) -> dict:
         "revisao": m.get("review"),
         "owner": m.get("owner_time"),
         "trajetoria": m.get("trajetoria"),
+        "plano": m.get("plan"),
         "trajetoria_retroativa": bool(m.get("trajetoria_retroativa")),
         "relatorio": relatorio[:12000],
     }
@@ -559,9 +575,9 @@ function dtg(d){return p2(d.getHours())+':'+p2(d.getMinutes())+':'+p2(d.getSecon
 function zulu(){return dtg(new Date())}
 setInterval(()=>{document.getElementById('dtg').textContent=dtg(new Date())},1000);document.getElementById('dtg').textContent=dtg(new Date());
 // O desfecho vem classificado do servidor (classificar() em monitor.py), com rc e significado.
-const COR={voo:'voo',verde:'verde',vermelho:'vermelho',barrada:'vermelho',aceite:'vermelho',base:'vermelho',falha:'falha'};
+const COR={voo:'voo',verde:'verde',vermelho:'vermelho',barrada:'vermelho',plano:'vermelho',aceite:'vermelho',base:'vermelho',falha:'falha'};
 function estado(o){return[COR[o.classe]||'cinza',o.rotulo||'SEM run report']}
-let op=null,pos=0,fixo=false,seguir=true,ultimas=[],aarFeito='',ultTs=null,uso={},recusas=0,faseAgora=null;
+let arq=null,op=null,pos=0,fixo=false,seguir=true,ultimas=[],aarFeito='',ultTs=null,uso={},recusas=0,faseAgora=null;
 const mmss=s=>{s=Math.max(0,Math.round(s));return(s>=3600?Math.floor(s/3600)+':'+p2(Math.floor(s%3600/60)):Math.floor(s/60))+':'+p2(s%60)};
 // O cronômetro da etapa, contra o teto dela (v0.5: o harness grava início e teto em fases.json).
 function desenharFase(){const el=document.getElementById('fasex');if(!el||!faseAgora)return;const f=faseAgora;let t=esc(f.texto||'');
@@ -624,6 +640,11 @@ function desenharAar(a){const chave=JSON.stringify(a)+'|'+recusas;if(chave===aar
   +esc({como_veio:'entrou como o agente entregou',consertado:'entrou depois de conserto',descartado:'não entrou'}[rv.desfecho]||rv.desfecho)+'</span>'
   +(rv.commit_alvo?' · <code>'+esc(rv.commit_alvo)+'</code>':'')+(rv.nota?'<div>'+esc(rv.nota)+'</div>':''))
   :'<span class="mut">sem revisão gravada (orchestrator/revisar.py)</span>');
+ const pl=a.plano;if(pl)h+=fato('Gate de plano (antes da implementação)','<div class="'+(pl.fora&&pl.fora.length||pl.acceptance&&pl.acceptance.length?'mau':'ok')+'">'+esc(pl.veredito||'—')+'</div>'
+  +(pl.arquivos?'<div class="mut">'+pl.arquivos.map(x=>'<code>'+esc(x)+'</code>').join(' · ')+'</div>':'')
+  +(pl.faltam&&pl.faltam.length?'<div class="mut">aviso: o plano não cobre '+esc(pl.faltam.join(', '))+'</div>':'')
+  +'<div class="mut">'+(pl.turnos!=null?pl.turnos+' turnos':'')+(pl.custo!=null?' · US$ '+Number(pl.custo).toFixed(2):'')
+  +(pl.retomada?' · a implementação retomou a sessão':pl.retomada===false?' · implementação em sessão nova':'')+'</div>');
  if(a.trajetoria)h+=fato('Trajetória do agent (só informa'+(a.trajetoria_retroativa?' · varrida depois do run':'')+')',!a.trajetoria.length?'<span class="ok">nenhum padrão conhecido no caminho</span>':
   a.trajetoria.map(t=>'<div class="mau">⚠ '+esc(t.padrao)+' ×'+t.n+' <span class="mut">— '+esc(t.o_que)+'</span></div>'
   +(t.exemplos||[]).map(x=>'<div class="mut"><code>'+esc(x)+'</code></div>').join('')).join(''));
@@ -664,9 +685,10 @@ async function placar(){try{const p=await(await fetch('api/placar')).json();cons
 async function ops(){placar();try{const r=await fetch('api/ops');ultimas=await r.json();
  if(!fixo&&ultimas.length){const a=(ultimas.find(o=>o.em_voo)||ultimas[0]).op;if(a!==op)trocar(a)}desenhar(ultimas);
  document.getElementById('lig').innerHTML='Conexão <b>OK</b>'}catch(e){document.getElementById('lig').innerHTML='Conexão <b style="color:var(--vermelho)">PERDIDA</b>'}}
-function trocar(o){op=o;pos=0;ultTs=null;uso={};recusas=0;faseAgora=null;log.innerHTML='';aarFeito='';caixa.innerHTML='';document.getElementById('opsel').textContent=o;desenhar(ultimas);linha('radio','spec','═══ '+o+' ═══')}
+function trocar(o){op=o;pos=0;arq=null;ultTs=null;uso={};recusas=0;faseAgora=null;log.innerHTML='';aarFeito='';caixa.innerHTML='';document.getElementById('opsel').textContent=o;desenhar(ultimas);linha('radio','spec','═══ '+o+' ═══')}
 window.addEventListener('scroll',()=>{},{passive:true});log.onscroll=()=>{seguir=log.scrollTop+log.clientHeight>=log.scrollHeight-30};
-async function puxar(){if(!op)return;try{const r=await fetch('api/feed?op='+encodeURIComponent(op)+'&pos='+pos+(ultTs?'&ts='+encodeURIComponent(ultTs):''));if(!r.ok)return;const d=await r.json();
+async function puxar(){if(!op)return;try{const r=await fetch('api/feed?op='+encodeURIComponent(op)+'&pos='+pos+(ultTs?'&ts='+encodeURIComponent(ultTs):'')+(arq?'&arq='+encodeURIComponent(arq):''));if(!r.ok)return;const d=await r.json();
+ if(arq&&d.arquivo&&d.arquivo!==arq){pos=0;linha('radio','spec','═══ '+(d.arquivo==='agent.jsonl'?'implementação':d.arquivo)+' ═══')}arq=d.arquivo||arq;
  if(d.pos<pos){log.innerHTML='';uso={};recusas=0}pos=d.pos;ultTs=d.ts||ultTs;
  for(const[k,n]of Object.entries(d.uso||{}))uso[k]=Math.max(uso[k]||0,n);
  for(const e of d.eventos){if(e.tipo==='fim')linha('fim'+(e.erro?' ruim':''),'FIM',e.texto+' · o run report está no topo',null,e.ts);
@@ -715,7 +737,7 @@ class Handler(BaseHTTPRequestHandler):
                 pos = max(0, int((q.get("pos") or ["0"])[0]))
             except ValueError:
                 pos = 0
-            self._json(ler_feed(pasta, pos, (q.get("ts") or [None])[0]))
+            self._json(ler_feed(pasta, pos, (q.get("ts") or [None])[0], (q.get("arq") or [None])[0]))
         else:
             self._json({"erro": "não encontrado"}, 404)
 

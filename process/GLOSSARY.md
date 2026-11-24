@@ -50,6 +50,7 @@ Os quatro pilares em que o vocabulário da indústria se organiza:
 | outcome-based spec | mission command (FIXO × DELEGÁVEL) | resultado fixo, meio livre, desvio declarado |
 | escalate | HOLD + SITREP | parar e perguntar em vez de adivinhar |
 | deviation log (`## Desvios da spec`) | `## Desvios da OPORD` | o que o agent fez diferente da spec, e por quê |
+| plan gate (v0.12) | (sem par) | o agent lista os arquivos antes de implementar; fora do escopo é rc 13 |
 | hermetic commit | gate de entrega | árvore testada = árvore commitada; fora do escopo aborta (rc 4) |
 
 ## Ciclo e lugares

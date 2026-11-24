@@ -193,7 +193,11 @@ ssh -N -L 8417:127.0.0.1:8417 usuario@servidor     # e abra http://127.0.0.1:841
 8. **Tempo do owner (v0.10):** anote quanto a spec levou em `"owner": {"spec_min": 25}` e, ao
    revisar, `revisar.py --op ops/<nome> --como-veio --revisao-min 12`. O Monitor soma os dois ao lado
    dos minutos de agent: é o número que mostra se o gargalo está mesmo nas pontas.
-9. Rode sempre `--dry-run` antes do `--live`.
+9. **Gate de plano (v0.12, ligado por padrão):** o run começa com o agent dizendo que arquivos vai
+   tocar, sem editar. Arquivo fora de `expected_artifacts`/`optional_artifacts` para o run com rc 13,
+   antes da implementação. Ponha nos opcionais o que a intent pode precisar; `"plan_gate": false`
+   desliga. Os códigos de saída estão na tabela de `process/POLICY.md`.
+10. Rode sempre `--dry-run` antes do `--live`.
 
 Para suítes longas, ponha `BASH_DEFAULT_TIMEOUT_MS=1200000 BASH_MAX_TIMEOUT_MS=1200000` na frente
 do `claude -p` no `cmd_template`. Sem isso, o Claude Code manda para segundo plano todo comando de
@@ -226,6 +230,9 @@ gate levou na baseline e o `timeout` a pedir.
   modelo. E revisão antes do merge, fora do agent, sempre.
 - **A spec também erra.** Uma ordem proibia justo o que dois guardrails do repositório exigiam; o
   agent obedeceu e o gate reprovou. Os guardrails fazem o erro aparecer antes do run.
+- **Arquivo fora do escopo se descobre antes, não no commit.** O commit recusado depois de uma hora de
+  agent virou o gate de plano: a lista de arquivos vem antes da implementação, e a implementação
+  retoma a mesma sessão, sem pagar o recon de novo.
 - **Teste que passa na base não prova o requirement.** A matriz marca isso como guarda de regressão,
   em vez de deixar passar como prova.
 

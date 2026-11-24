@@ -43,6 +43,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import compat  # noqa: E402 — os nomes antigos das ops de antes da v0.9
 import owner  # noqa: E402 — v0.10, o tempo do owner
 import trajetoria  # noqa: E402 — v0.11, o caminho do agent
+import plano  # noqa: E402 — v0.12, o gate de plano
 
 # Console em UTF-8 (Windows usa cp1252 por default e engasga em ─ · ←).
 try:
@@ -532,13 +533,15 @@ AGENT_TIMEOUT_S = 90 * 60     # teto default do agente (op.json: agent.timeout_s
 GATE_TIMEOUT_S = 30 * 60
 
 
-def dispatch_agent(cfg, brief_file: Path, log_file: Path):
+def dispatch_agent(cfg, brief_file: Path, log_file: Path, *, timeout=None, sessao=None):
     """SEAM do modelo: roda o agente. cmd_template vem do op.json.
     Placeholders: {brief_file} {worktree} {model}.
     v0.2: a saída inteira fica em `log_file` (é onde o agente declara desvio — policy §7) e o
     teto de tempo vem do op.json. Retorna (ok, saída, rc)."""
     cmd = _fmt(cfg["agent"]["cmd_template"], cfg, brief_file=str(brief_file))
-    timeout = cfg["agent"].get("timeout_s", AGENT_TIMEOUT_S)
+    if sessao:                                       # v0.12 — a implementação retoma a sessão do plano
+        cmd = plano.retomar(cmd, sessao) or cmd
+    timeout = timeout or cfg["agent"].get("timeout_s", AGENT_TIMEOUT_S)
     log("OPR", f"dispatch (teto {timeout}s): {cmd}")
     rc, out = run(cmd, cwd=cfg["worktree"], timeout=timeout, log_file=log_file, env=ambiente(cfg))
     if rc == RC_TIMEOUT:
@@ -591,6 +594,7 @@ def parse_agent_output(text: str) -> dict:
         "output_tokens": usage.get("output_tokens"),
         "cache_read_input_tokens": usage.get("cache_read_input_tokens"),
         "modelos": sorted(modelos),
+        "session_id": final.get("session_id"),
         "recusas": recusas,
     }
 
@@ -875,6 +879,7 @@ def write_aar(op_dir: Path, op_id, results: dict):
     if m.get("result_text"):
         lines += ["## Relatório do agente (verbatim — desvios declarados, policy §7)", "",
                   m["result_text"], ""]
+    lines += plano.linhas(results.get("plan"))                          # v0.12
     lines += trajetoria.linhas(results.get("trajetoria"))                # v0.11
     if results.get("gate") is not None:
         g = results["gate"]
@@ -1027,6 +1032,47 @@ def review_entrega(cfg, opord: Path, alvo: Path | None, base: str | None, gate: 
         return {"estado": f"indisponível: {type(e).__name__}: {str(e)[:160]}"}
 
 
+def _fase_de_plano(cfg, op_dir: Path, brief_file: Path, aceite, results):
+    """v0.12 — roda a fase de plano e julga. Devolve (rc, status) para parar o run, ou a sessão a
+    retomar (None se não houver como retomar)."""
+    plan_brief = op_dir / "_plan_brief.txt"
+    plan_brief.write_text(brief_file.read_text(encoding="utf-8") + plano.instrucao(cfg), encoding="utf-8")
+    _, antes = git(["status", "--porcelain", "-uall"], cwd=cfg["worktree"])
+    teto = cfg["agent"].get("plan_timeout_s", plano.TIMEOUT_S)
+    _, out, rc = dispatch_agent(cfg, plan_brief, op_dir / "plan.jsonl", timeout=teto)
+    matar_restos(cfg["worktree"])
+    p = parse_agent_output(out)
+    _, depois = git(["status", "--porcelain", "-uall"], cwd=cfg["worktree"])
+    info = {"turnos": p.get("num_turns"), "custo": p.get("total_cost_usd"),
+            "modelos": p.get("modelos"), "duration_ms": p.get("duration_ms")}
+    results["plan"] = info
+    if p.get("is_error"):
+        return 6, "ABORT — agente terminou em erro na fase de plano (is_error): " + p.get("result_text", "")[:300]
+    if rc == RC_TIMEOUT:
+        return 5, f"ABORT — a fase de plano estourou o teto de tempo ({teto}s)"
+    mudou = sorted(set(depois.splitlines()) ^ set(antes.splitlines()))
+    if mudou:
+        info["veredito"] = f"o agent mexeu na worktree durante o plano: {[m[3:] for m in mudou][:10]}"
+        return plano.RC_PLANO, "ABORT (plano) — " + info["veredito"]
+    arquivos = plano.ler(p.get("result_text", ""), cfg.get("worktree"))
+    if arquivos is None:
+        info["veredito"] = "o agent não devolveu o plano no formato pedido ({\"arquivos\": [...]})"
+        info["fim_da_resposta"] = p.get("result_text", "")[-600:]
+        return plano.RC_PLANO, "ABORT (plano) — " + info["veredito"]
+    info.update(plano.julgar(cfg, arquivos, aceite))
+    if info["fora"] or info["acceptance"]:
+        motivo = ([f"fora do escopo: {info['fora']}"] if info["fora"] else []) + (
+            [f"acceptance test no plano: {info['acceptance']}"] if info["acceptance"] else [])
+        info["veredito"] = "plano recusado — " + "; ".join(motivo) + " (nada foi implementado)"
+        return plano.RC_PLANO, "ABORT (plano) — " + info["veredito"]
+    sessao = p.get("session_id")
+    retoma = plano.retomar(_fmt(cfg["agent"]["cmd_template"], cfg, brief_file="x"), sessao) is not None
+    info["retomada"] = retoma
+    info["veredito"] = f"plano aprovado: {len(arquivos)} arquivo(s), todos no escopo"
+    log("PLN", info["veredito"] + (f" · faltam no plano: {info['faltam']}" if info["faltam"] else ""))
+    return sessao if retoma else None
+
+
 def _min(ms):
     return f"{ms / 60000:.1f} min" if isinstance(ms, (int, float)) else "—"
 
@@ -1062,6 +1108,7 @@ def main():
             f"Acceptance: {', '.join(aceite) + ' · ' + cfg['acceptance']['cmd'] if aceite else '—'}",
             f"Guardrails: {alvo.name + ' (todas citadas na spec)' if alvo else '—'}",
             f"Database  : {'próprio do run, receita ' + cfg['workspace']['banco'] if cfg.get('workspace') else 'o do target (sem workspace)'}",
+            f"Plan gate : {'ligado (rc 13 se o plano sair do escopo)' if plano.ligado(cfg) else 'desligado no op.json'}",
             f"Briefing  : {len(brief)} chars (spec + policy" + (" + guardrails" if alvo else "")
             + (" + acceptance" if aceite else "") + ")"])
 
@@ -1243,9 +1290,29 @@ def _voar(cfg, op_dir, op_id, opord, alvo, aceite, brief, estado):
             return RC_ACCEPTANCE_BASE
         log("ACT", f"aceite falha na base como devia: {c}")
 
+    # v0.12 — o gate de plano: o agent diz que arquivos vai tocar antes de tocar; fora do escopo para
+    # aqui (rc 13), e não no commit depois de uma hora de agent.
+    sessao = None
+    if plano.ligado(cfg):
+        fase("plano")
+        r = _fase_de_plano(cfg, op_dir, brief_file, aceite, results)
+        if isinstance(r, tuple):
+            rc_p, status = r
+            results["committed"] = False
+            finish(rc_p, status)
+            log("STATUS", status)
+            return rc_p
+        sessao = r
+        if sessao is None:                           # sem sessão para retomar: briefing novo com o plano
+            with open(brief_file, "a", encoding="utf-8") as h:
+                h.write(plano.anexo_sem_retomar(results["plan"]["arquivos"]))
+        else:
+            brief_file = op_dir / "_impl_brief.txt"
+            brief_file.write_text(plano.continua(results["plan"]["arquivos"]), encoding="utf-8")
+
     fase("agente")
     results["agent_ok"], op_out, results["agent_rc"] = dispatch_agent(
-        cfg, brief_file, op_dir / "agent.jsonl")
+        cfg, brief_file, op_dir / "agent.jsonl", sessao=sessao)
     results["agent"] = parse_agent_output(op_out)
     # v0.11 — o caminho do agent, não só o fim: segundo plano, acceptance aberto, teste em paralelo,
     # rede. Só informa; o rc não muda por isto.
