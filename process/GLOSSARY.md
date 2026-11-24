@@ -54,6 +54,8 @@ Os quatro pilares em que o vocabulário da indústria se organiza:
 | review depth (v0.13) | (sem par) | rápido, padrão ou fundo: `risk` no op.json, senão o tamanho do diff e os caminhos sensíveis |
 | reviewer calibration (v0.13) | calibração do revisor | real × falso × perdido, julgado pelo owner: precisão e cobertura |
 | shadow veto (v0.14) | (sem par) | o que o reviewer teria segurado; só registra, comparado com o que o owner barrou |
+| intent (`intent.md`, v0.16) | Commander's Intent (em parte) | a meia página do owner — problema, resultado, restrições, perguntas — de onde o `intent.py` rascunha a spec |
+| draft (`"draft": true`, v0.16) | (sem par) | spec rascunhada que valida no dry run e que o `--live` recusa até o owner aprovar |
 | harness evals (`orchestrator/evals.py`, v0.15) | (sem par) | reexecutar ops reais, de resultado conhecido, contra a base delas, e comparar com o run original |
 | plan gate (v0.12) | (sem par) | o agent lista os arquivos antes de implementar; fora do escopo é rc 13 |
 | hermetic commit | gate de entrega | árvore testada = árvore commitada; fora do escopo aborta (rc 4) |

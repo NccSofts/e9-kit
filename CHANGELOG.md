@@ -2,6 +2,21 @@
 
 As versões do kit, da mais nova para a mais antiga. As mudanças de comportamento vêm com o motivo, porque cada uma nasceu de uma falha medida.
 
+## v0.16 (2026-11-24) — do intent à spec
+
+- **`orchestrator/intent.py`** e **`process/INTENT-template.md`**: o owner escreve meia página (Target,
+  Problema, Resultado esperado, Restrições, Perguntas em aberto), e o Claude rascunha `spec.md`, `op.json`
+  e os acceptance tests. Ele lê o target (`--add-dir`, sem Bash) e escreve só na pasta da op; o molde do
+  cabeamento é o `op.json` da op mais recente do mesmo target.
+- O harness confere de fora: o target não mudou (git status), a pasta só ganhou `spec.md`, `op.json` e
+  `acceptance/`, e o rascunho passa no `--dry-run`. Se não passar, o mesmo agent recebe o erro e corrige
+  na mesma sessão.
+- As perguntas em aberto voltam no topo da spec, com as suposições marcadas; o rascunho não decide pelo
+  owner.
+- O rascunho nasce com `"draft": true`, e o **`--live` recusa rascunho**. `--aprovar` tira o `draft` e
+  grava os minutos de spec.
+- 7 casos novos (`test_intent.py`).
+
 ## v0.15 (2026-11-24) — os evals do harness
 
 - **`orchestrator/evals.py`**: reexecuta ops que já rodaram contra o commit de base de cada uma, numa

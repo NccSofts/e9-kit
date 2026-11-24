@@ -42,7 +42,7 @@ Só o rc 0 entrega alguma coisa, e o que ele entrega é uma branch para revisão
 
 | rc | Onde | O que quer dizer |
 |---|---|---|
-| 1 | contrato | a spec ou o `op.json` não passam na validação (policy, guardrails, traceability, owner) — nada foi tocado |
+| 1 | contrato | a spec ou o `op.json` não passam na validação (policy, guardrails, traceability, owner), ou a spec é um rascunho (`"draft": true`, v0.16) que o owner ainda não aprovou — nada foi tocado |
 | 11 | trava | a mesma op já está em run, ou nenhum slot desocupou dentro do teto |
 | 2 | worktree | não deu para cortar a worktree do target |
 | 12 | banco do run | o Postgres do run não ficou pronto |

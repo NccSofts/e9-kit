@@ -17,6 +17,8 @@ ops/*/baseline.log
 ops/*/_brief.txt
 ops/*/_plan_brief.txt
 ops/*/_impl_brief.txt
+ops/*/_rascunho_brief.txt
+ops/*/_rascunho.jsonl
 ops/*/plan.jsonl
 ops/*/acceptance-*.log
 ops/*/aceite-*.log

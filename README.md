@@ -156,7 +156,12 @@ ssh -N -L 8417:127.0.0.1:8417 usuario@servidor     # e abra http://127.0.0.1:841
 ## Sua própria op
 
 1. Crie `ops/<nome>/` com um `spec.md` (modelo em `process/SPEC-template.md`) e um `op.json`
-   (copie o do exemplo).
+   (copie o do exemplo). Ou, desde a v0.16, escreva só um `intent.md` (`process/INTENT-template.md`:
+   problema, resultado esperado, restrições, perguntas em aberto) e rode
+   `python3 orchestrator/intent.py --op ops/<nome> --repo <clone do projeto>`: o Claude lê o projeto,
+   sem escrever nele, e rascunha `spec.md`, `op.json` e os acceptance tests, já validados pelo dry run.
+   O rascunho nasce com `"draft": true`, e o `--live` o recusa até você revisar e aprovar
+   (`intent.py --op ops/<nome> --aprovar --spec-min 15`).
 2. No `op.json`, os campos que importam:
    - `target_repo`, `worktree`, `branch` (sempre `feat/...`);
    - `prod_markers`: trechos que, se aparecerem no `target_repo`, querem dizer produção;

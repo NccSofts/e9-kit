@@ -1130,6 +1130,11 @@ def main():
             f"Briefing  : {len(brief)} chars (spec + policy" + (" + guardrails" if alvo else "")
             + (" + acceptance" if aceite else "") + ")"])
 
+    if cfg.get("draft"):                        # v0.16 — rascunho do intent.py: o owner revisa antes
+        if not dry:
+            sys.exit("ABORT (draft): a spec é um rascunho (\"draft\": true no op.json). Revise e aprove: "
+                     f"python3 orchestrator/intent.py --op {op_dir} --aprovar --spec-min <minutos>")
+        log("DRY RUN", "RASCUNHO — valida, mas o --live recusa até o owner aprovar (intent.py --aprovar).")
     if dry:
         log("DRY RUN", "validação OK. Plano: worktree → baseline → agent → gate → commit(branch) → run report.")
         log("DRY RUN", "Nada foi mutado. Para valer: --live.")
