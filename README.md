@@ -6,7 +6,7 @@ agent não consegue fazer push, merge nem mexer em arquivo que a spec não liber
 pronto é a sua suíte de testes, não o agent.
 
 Nasceu de duas dezenas de tarefas reais num produto em produção, e cada regra daqui veio de uma
-delas que deu errado. Versão **v0.9.1**; o que mudou de uma versão para outra está no
+delas que deu errado. Versão **v0.16**; o que mudou de uma versão para outra está no
 [`CHANGELOG.md`](CHANGELOG.md).
 
 O porquê de cada peça, com os números das tarefas que as originaram, está no artigo
@@ -32,7 +32,8 @@ Os nomes estão em `process/GLOSSARY.md`, com a coluna dos nomes antigos para qu
 ## O ciclo
 
 ```
-dry run → worktree (+ banco do run) → baseline → acceptance tests (têm de falhar) → agent
+(intent → rascunho da spec, revisado por você) → dry run → worktree (+ banco do run) → baseline
+        → acceptance tests (têm de falhar) → plano do agent (só os arquivos do escopo) → agent
         → quality gate → acceptance tests (têm de passar, intactos) → AI code review (opcional)
         → só os arquivos listados → commit na feat/*, sem push → run report
 ```
@@ -42,6 +43,7 @@ Cada jeito de falhar tem um código de saída:
 | rc | Onde parou | O que quer dizer |
 |---|---|---|
 | 0 | fim | commit na branch, pronto para revisão |
+| 1 | contrato | a spec ou o `op.json` não passam na validação, ou a spec é um rascunho (`"draft": true`) que você ainda não aprovou |
 | 2 | worktree | não montou a cópia isolada |
 | 3 | quality gate | o agent entregou e o gate reprovou |
 | 4 | commit | o agent mexeu em arquivo fora da lista |
@@ -53,6 +55,7 @@ Cada jeito de falhar tem um código de saída:
 | 10 | acceptance tests | o agent mexeu neles, ou não passaram inteiros (falha, skip, contagem menor) |
 | 11 | trava da op | a mesma op já está rodando |
 | 12 | banco do run | o Postgres do run não subiu ou não responde: nada foi despachado |
+| 13 | plano | o plano do agent saiu do escopo, incluiu acceptance test, não veio legível, ou ele mexeu na worktree durante o plano: nada foi implementado |
 
 ## Requisitos
 
