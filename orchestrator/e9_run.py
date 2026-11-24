@@ -1024,7 +1024,7 @@ def base_da_entrega(cfg) -> str | None:
     return base.strip() if rc == 0 else None
 
 
-def review_entrega(cfg, opord: Path, alvo: Path | None, base: str | None, gate: dict) -> dict:
+def review_entrega(cfg, opord: Path, alvo: Path | None, base: str | None, gate: dict, aceite=()) -> dict:
     """v0.6 — o parecer de outra família de modelo (orchestrator/revisor.py). Só informa: o rc não
     muda por ele. Nunca levanta."""
     mod = _carregar("reviewer.py", "e9_reviewer")
@@ -1035,8 +1035,15 @@ def review_entrega(cfg, opord: Path, alvo: Path | None, base: str | None, gate: 
             return {"estado": "desligado"}
         if not base:
             return {"estado": "indisponível: base da entrega desconhecida"}
-        diff = mod.diff_da_worktree(cfg["worktree"], base, cfg.get("worktree_link", []))
+        # v0.16.1 — os acceptance tests saem do diff: quem os pôs na worktree foi o harness, e o sha256 já
+        # provou que o agent não os mexeu. Dentro do diff, o reviewer os lia como "o agent criou um teste
+        # somente leitura", marcava crítico, e o veto em sombra seguraria uma entrega certa (visto num run real do kit).
+        diff = mod.diff_da_worktree(cfg["worktree"], base, [*cfg.get("worktree_link", []), *aceite])
         travas = alvo.read_text(encoding="utf-8") if alvo else ""
+        if aceite:
+            travas += ("\n\n(Os acceptance tests desta op — " + ", ".join(aceite) + " — foram escritos antes do "
+                       "run e instalados na worktree pelo harness, não pelo agent; ficam fora do diff, e o sha256 "
+                       "confirmou que o agent não os alterou. Não são achado.)")
         # v0.13 — o REVIEW.md do target diz o que é crítico; sem ele, o modelo genérico do process/
         rmd = (TARGETS_DIR / f"{cfg['target']}.review.md") if cfg.get("target") else None
         review = mod.ler_review_md(rmd if rmd and rmd.exists() else
@@ -1396,7 +1403,7 @@ def _voar(cfg, op_dir, op_id, opord, alvo, aceite, brief, estado):
         # v0.6 — gate verde: o revisor de outro modelo lê a spec, as travas e o diff. Vem antes do
         # aceite e do commit para cobrir também a entrega barrada (F) e a de aceite falho.
         fase("reviewer")
-        results["reviewer"] = review_entrega(cfg, opord, alvo, base, results["gate"])
+        results["reviewer"] = review_entrega(cfg, opord, alvo, base, results["gate"], aceite)
         rv = results["reviewer"]
         results["veto_sombra"] = calibracao.sombra(rv)                  # v0.14 — só registra
         if results["veto_sombra"]:

@@ -160,6 +160,34 @@ def test_dashboard_mostra_veto_e_calibracao():
     assert "Veto em sombra" in tv.v.PAGINA and "precisão" in tv.v.PAGINA
 
 
+def test_acceptance_test_instalado_pelo_harness_fica_fora_do_diff_do_reviewer():
+    """Num run real, o arquivo de acceptance no diff virou achado crítico e o veto em sombra teria
+    segurado uma entrega certa. Ele sai do diff, e o reviewer é avisado de onde veio."""
+    import reviewer as mod
+    wt = Path(tempfile.mkdtemp())
+    t.e9.run(["git", "init", "-q", "-b", "main", str(wt)])
+    t.e9.run(["git", "-C", str(wt), "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "i"])
+    _, base = t.e9.run(["git", "-C", str(wt), "rev-parse", "HEAD"])
+    (wt / "tests").mkdir()
+    (wt / "tests" / "test_aceite_x.py").write_text("def test_fr_001(): pass\n", encoding="utf-8")
+    (wt / "a.py").write_text("x = 1\n", encoding="utf-8")
+    visto = {}
+    orig = (mod.ligado, mod.revisar)
+    mod.ligado = lambda cfg: True
+    mod.revisar = lambda modelo, opord, travas, diff, gate, **k: visto.update(diff=diff, travas=travas) or {"estado": "ok"}
+    carregar = t.e9._carregar
+    t.e9._carregar = lambda nome, apelido: mod if nome == "reviewer.py" else carregar(nome, apelido)
+    try:
+        spec = wt.parent / "spec-x.md"
+        spec.write_text("spec", encoding="utf-8")
+        t.e9.review_entrega({"worktree": str(wt)}, spec, None, base.strip(), {}, ["tests/test_aceite_x.py"])
+    finally:
+        mod.ligado, mod.revisar = orig
+        t.e9._carregar = carregar
+    assert "a.py" in visto["diff"] and "test_aceite_x" not in visto["diff"], visto["diff"]
+    assert "instalados na worktree pelo harness" in visto["travas"]
+
+
 if __name__ == "__main__":
     falhas = 0
     for nome, f in sorted(globals().items()):

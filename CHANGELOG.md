@@ -2,6 +2,13 @@
 
 As versões do kit, da mais nova para a mais antiga. As mudanças de comportamento vêm com o motivo, porque cada uma nasceu de uma falha medida.
 
+## v0.16.1 (2026-11-24) — o acceptance test fora do diff do reviewer
+
+- Num run de verdade do exemplo, o reviewer marcou como **crítico** o arquivo de acceptance que o próprio
+  harness instala na worktree ("o diff cria um arquivo somente leitura"), e o veto em sombra seguraria uma
+  entrega certa. Agora os acceptance tests saem do diff, e o reviewer recebe uma linha dizendo que eles
+  foram instalados pelo harness e conferidos por sha256. 1 caso novo.
+
 ## v0.16 (2026-11-24) — do intent à spec
 
 - **`orchestrator/intent.py`** e **`process/INTENT-template.md`**: o owner escreve meia página (Target,

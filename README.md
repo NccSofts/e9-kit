@@ -6,7 +6,7 @@ agent não consegue fazer push, merge nem mexer em arquivo que a spec não liber
 pronto é a sua suíte de testes, não o agent.
 
 Nasceu de duas dezenas de tarefas reais num produto em produção, e cada regra daqui veio de uma
-delas que deu errado. Versão **v0.16**; o que mudou de uma versão para outra está no
+delas que deu errado. Versão **v0.16.1**; o que mudou de uma versão para outra está no
 [`CHANGELOG.md`](CHANGELOG.md).
 
 O porquê de cada peça, com os números das tarefas que as originaram, está no artigo
