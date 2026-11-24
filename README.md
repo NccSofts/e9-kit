@@ -205,6 +205,10 @@ ssh -N -L 8417:127.0.0.1:8417 usuario@servidor     # e abra http://127.0.0.1:841
    antes da implementação. Ponha nos opcionais o que a intent pode precisar; `"plan_gate": false`
    desliga. Os códigos de saída estão na tabela de `process/POLICY.md`.
 10. Rode sempre `--dry-run` antes do `--live`.
+11. **Evals do harness (v0.15):** quando mudar o modelo, o briefing ou um guardrail, reexecute ops que
+    já rodaram contra a base delas e compare com o original: `python3 orchestrator/evals.py --listar`,
+    depois `--op <op> --op <outra> --live --teto-usd 5`. Cada op é um run de verdade; o eval apaga a
+    worktree e a branch que criou, e o resumo (`evals/<id>.json`) aparece no Monitor.
 
 Para suítes longas, ponha `BASH_DEFAULT_TIMEOUT_MS=1200000 BASH_MAX_TIMEOUT_MS=1200000` na frente
 do `claude -p` no `cmd_template`. Sem isso, o Claude Code manda para segundo plano todo comando de

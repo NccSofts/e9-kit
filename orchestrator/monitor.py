@@ -35,6 +35,7 @@ import compat  # noqa: E402 — os nomes antigos das ops de antes de 03/11
 import owner  # noqa: E402 — v0.10, o tempo do owner
 import trajetoria  # noqa: E402 — v0.11
 import calibracao  # noqa: E402 — v0.13/v0.14
+import evals  # noqa: E402 — v0.15, os evals do harness
 
 OPS = Path(__file__).resolve().parent.parent / "ops"
 LOTE_MAX = 400 * 1024          # bytes por resposta: o navegador não engasga num transcript grande
@@ -108,7 +109,7 @@ def classificar(status: str | None, voando: bool = False, rc: int | None = None)
         chave = "base"
     elif "agente" in s and ("erro" in s or "timeout" in s):
         chave = "falha"
-    elif "gate vermelho" in s:
+    elif "gate vermelho" in s or "overwatch vermelho" in s:   # o status de antes da v0.9 diz "overwatch"
         chave = "vermelho"
     elif "commit falhou" in s:
         chave = "barrada"
@@ -571,6 +572,7 @@ footer{position:fixed;bottom:0;left:0;right:0;padding:5px 16px;background:#0f130
 <main>
  <div class="col">
  <section class="painel" id="painelplacar"><h2 class="cx"><span>Placar dos runs</span><span class="mut" id="placarn">—</span></h2><div id="placar" class="placar">…</div></section>
+ <section class="painel" id="painelevals"><h2 class="cx"><span>Evals do harness</span><span class="mut" id="evalsn">—</span></h2><div id="evals" class="placar">…</div></section>
  <section class="painel" id="painelmis"><h2 class="cx" id="cabmis"><span>Runs <span class="seta">▾</span></span><span id="nops">—</span></h2><div id="atual" class="m sel"></div><div id="missoes"></div></section>
  </div>
  <section class="painel"><h2 class="cx"><span>Log do agent</span><span id="opsel">—</span></h2>
@@ -703,7 +705,16 @@ async function placar(){try{const p=await(await fetch('api/placar')).json();cons
   +(()=>{const c=p.calibracao||{};return c.julgados?'<div>reviewer: precisão <b>'+Math.round(100*c.precisao)+'%</b> ('+c.julgados+' achados julgados) · cobertura '
    +(c.cobertura==null?'—':Math.round(100*c.cobertura)+'%')+' ('+c.perdidos+' perdido(s)) em '+c.ops+' ops</div>':'<div class="mut">reviewer: nenhuma calibração julgada ainda</div>'})()
   +(()=>{const t=p.trajetoria||{};return t.varridos?'<div>trajetória com achado: <b class="'+(t.com_achado?'mau':'ok')+'">'+t.com_achado+'</b> de '+t.varridos+' varridos</div>':''})()}catch(e){}}
-async function ops(){placar();try{const r=await fetch('api/ops');ultimas=await r.json();
+async function evalsHarness(){try{const e=await(await fetch('api/evals')).json();const el=document.getElementById('evals');
+ if(!e.id){el.innerHTML='<span class="mut">nenhum eval rodado ainda (orchestrator/evals.py)</span>';return}
+ const g=e.agregado||{},brl=v=>v==null?'—':'US$ '+Number(v).toFixed(2).replace('.',',');
+ document.getElementById('evalsn').textContent=e.id+' · harness '+(e.harness||'');
+ el.innerHTML='<div>rc 0: original <b>'+g.rc0_original+'</b> → eval <b class="'+(g.rc0_eval<g.rc0_original?'mau':'ok')+'">'+g.rc0_eval+'</b> de '+g.rodaram
+  +' · mesmo rc '+g.mesmo_rc+'</div><div>custo '+brl(g.custo_original)+' → '+brl(g.custo_eval)+' · tempo '+(g.min_original??'—')+' → '+(g.min_eval??'—')+' min</div>'
+  +((g.piorou||[]).length?'<div class="mau">piorou: '+esc(g.piorou.join(', '))+'</div>':'')+((g.melhorou||[]).length?'<div class="ok">melhorou: '+esc(g.melhorou.join(', '))+'</div>':'')
+  +(e.itens||[]).map(i=>'<div class="mut">'+esc(i.op)+': '+(i.fora?'fora — '+esc(i.fora):i.eval?'rc '+i.original.rc+' → '+i.eval.rc
+   +(i.eval.plano?' · '+esc(i.eval.plano):'')+(i.eval.custo!=null?' · '+brl(i.eval.custo):''):'não rodou')+'</div>').join('')}catch(err){}}
+async function ops(){placar();evalsHarness();try{const r=await fetch('api/ops');ultimas=await r.json();
  if(!fixo&&ultimas.length){const a=(ultimas.find(o=>o.em_voo)||ultimas[0]).op;if(a!==op)trocar(a)}desenhar(ultimas);
  document.getElementById('lig').innerHTML='Conexão <b>OK</b>'}catch(e){document.getElementById('lig').innerHTML='Conexão <b style="color:var(--vermelho)">PERDIDA</b>'}}
 function trocar(o){op=o;pos=0;arq=null;ultTs=null;uso={};recusas=0;faseAgora=null;log.innerHTML='';aarFeito='';caixa.innerHTML='';document.getElementById('opsel').textContent=o;desenhar(ultimas);linha('radio','spec','═══ '+o+' ═══')}
@@ -749,6 +760,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json(listar_ops())
         elif u.path == "/api/placar":
             self._json(placar())
+        elif u.path == "/api/evals":                    # v0.15 — o eval do harness mais recente
+            self._json(evals.ultimo() or {})
         elif u.path == "/api/feed":
             q = parse_qs(u.query)
             pasta = _op_valida((q.get("op") or [""])[0])

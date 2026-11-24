@@ -511,7 +511,9 @@ def setup_worktree(cfg):
         rc, out = 0, f"worktree reaproveitada em {branch}"
         log("WT", out)
     else:
-        rc, out = git(["worktree", "add", "-B", branch, wt], cwd=target)
+        # v0.15 — o eval do harness corta a worktree do commit de base da op original, não do HEAD
+        base_ref = cfg.get("base_ref")
+        rc, out = git(["worktree", "add", "-B", branch, wt, *([base_ref] if base_ref else [])], cwd=target)
         if rc != 0:
             return False, out
     for rel in cfg.get("worktree_link", []):
@@ -1191,6 +1193,7 @@ def _voar(cfg, op_dir, op_id, opord, alvo, aceite, brief, estado):
     brief_file = op_dir / "_brief.txt"
     brief_file.write_text(brief, encoding="utf-8")
     base = base_da_entrega(cfg)            # v0.6 — antes do agente: é de onde o diff do revisor parte
+    results["base_commit"] = base          # v0.15 — é daqui que um eval do harness reexecuta a op
 
     t0 = time.monotonic()
     tetos = {"agente": cfg["agent"].get("timeout_s", AGENT_TIMEOUT_S), "reviewer": 600}

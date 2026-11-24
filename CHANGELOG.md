@@ -2,6 +2,18 @@
 
 As versões do kit, da mais nova para a mais antiga. As mudanças de comportamento vêm com o motivo, porque cada uma nasceu de uma falha medida.
 
+## v0.15 (2026-11-24) — os evals do harness
+
+- **`orchestrator/evals.py`**: reexecuta ops que já rodaram contra o commit de base de cada uma, numa
+  cópia com branch e worktree próprias (apagadas no fim), e compara com o run original: rc, custo,
+  tempo, gate, acceptance e o desfecho da revisão. É o que o *AI-native SDLC playbook* pede para saber
+  se uma troca de modelo, de briefing ou de guardrail piorou o conjunto.
+- A base vem do `base_commit` que o run grava desde a v0.15; para runs antigos, do pai do commit da
+  entrega, ou do `main` no início do run. O `op.json` aceita `base_ref`.
+- Teto de custo (`--teto-usd`), só sob demanda, e o resumo no Monitor ("Evals do harness").
+- O Monitor volta a rotular como VERMELHO (rc 3) os runs antigos cujo status diz "overwatch vermelho".
+- 8 casos novos (`test_evals.py`).
+
 ## v0.13 e v0.14 (2026-11-24) — o reviewer com `REVIEW.md`, medido, e o veto em sombra
 
 - **`REVIEW.md` por target** (`targets/<target>.review.md`; sem ele, `process/REVIEW-template.md`): o

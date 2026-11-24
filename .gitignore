@@ -22,3 +22,6 @@ ops/*/acceptance-*.log
 ops/*/aceite-*.log
 ops/*/fases.json
 ops/*/.voo.lock
+
+# Evals do harness (v0.15): as cópias e os brutos ficam na máquina; o resumo (evals/<id>.json) é o que vai ao git.
+evals/*/
