@@ -27,6 +27,7 @@ As versões do kit, da mais nova para a mais antiga. As mudanças de comportamen
   entrega, ou do `main` no início do run. O `op.json` aceita `base_ref`.
 - Teto de custo (`--teto-usd`), só sob demanda, e o resumo no Monitor ("Evals do harness").
 - O Monitor volta a rotular como VERMELHO (rc 3) os runs antigos cujo status diz "overwatch vermelho".
+- A cópia que um eval reexecuta não marca a op original como em curso; o eval aparece no painel dele.
 - 8 casos novos (`test_evals.py`).
 
 ## v0.13 e v0.14 (2026-11-24) — o reviewer com `REVIEW.md`, medido, e o veto em sombra

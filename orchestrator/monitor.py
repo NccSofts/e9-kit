@@ -46,25 +46,39 @@ def _ops_dir() -> Path:
     return Path(os.environ.get("E9_OPS_DIR") or OPS)
 
 
-def em_voo() -> set[str]:
-    """Pastas de op com um `e9_run.py --live` vivo agora (lido do /proc, sem shell)."""
-    vivas: set[str] = set()
+def _runs_vivos() -> list[Path]:
+    """O `--op` de cada `e9_run.py --live` vivo agora (lido do /proc, sem shell), já resolvido."""
+    vivos: list[Path] = []
     proc = Path("/proc")
     if not proc.is_dir():
-        return vivas
+        return vivos
     for p in proc.iterdir():
         if not p.name.isdigit():
             continue
         try:
             args = (p / "cmdline").read_bytes().split(b"\0")
+            cwd = os.readlink(p / "cwd")
         except OSError:
             continue
         partes = [a.decode("utf-8", "replace") for a in args if a]
         if any(a.endswith("e9_run.py") for a in partes) and "--live" in partes and "--op" in partes:
             i = partes.index("--op")
             if i + 1 < len(partes):
-                vivas.add(Path(partes[i + 1]).name)
-    return vivas
+                vivos.append((Path(cwd) / partes[i + 1]).resolve())
+    return vivos
+
+
+def em_eval() -> list[str]:
+    """As ops que um eval do harness (v0.15) está reexecutando agora: o `--op` mora em `evals/<id>/`."""
+    return [f"{p.parent.name}/{p.name}" for p in _runs_vivos() if p.parent.parent.name == "evals"]
+
+
+def em_voo() -> set[str]:
+    """Pastas de `ops/` com um `e9_run.py --live` vivo agora. Só as de `ops/`: a cópia que um eval
+    reexecuta tem o mesmo nome da op original, e até 24/11 a original aparecia EM VOO no quadro, com o
+    cronômetro contando desde o run de semanas atrás."""
+    base = _ops_dir().resolve()
+    return {p.name for p in _runs_vivos() if p.parent == base}
 
 
 # O que cada desfecho quer dizer, com o código de saída do harness e o nome de mercado. A ordem
@@ -706,13 +720,14 @@ async function placar(){try{const p=await(await fetch('api/placar')).json();cons
    +(c.cobertura==null?'—':Math.round(100*c.cobertura)+'%')+' ('+c.perdidos+' perdido(s)) em '+c.ops+' ops</div>':'<div class="mut">reviewer: nenhuma calibração julgada ainda</div>'})()
   +(()=>{const t=p.trajetoria||{};return t.varridos?'<div>trajetória com achado: <b class="'+(t.com_achado?'mau':'ok')+'">'+t.com_achado+'</b> de '+t.varridos+' varridos</div>':''})()}catch(e){}}
 async function evalsHarness(){try{const e=await(await fetch('api/evals')).json();const el=document.getElementById('evals');
- if(!e.id){el.innerHTML='<span class="mut">nenhum eval rodado ainda (orchestrator/evals.py)</span>';return}
+ const cur=(e.em_curso||[]).length?'<div class="voo">eval em curso: '+esc(e.em_curso.join(', '))+'</div>':'';
+ if(!e.id){el.innerHTML=cur+'<span class="mut">nenhum eval gravado ainda (orchestrator/evals.py)</span>';return}
  const g=e.agregado||{},brl=v=>v==null?'—':'US$ '+Number(v).toFixed(2).replace('.',',');
  document.getElementById('evalsn').textContent=e.id+' · harness '+(e.harness||'');
  el.innerHTML='<div>rc 0: original <b>'+g.rc0_original+'</b> → eval <b class="'+(g.rc0_eval<g.rc0_original?'mau':'ok')+'">'+g.rc0_eval+'</b> de '+g.rodaram
   +' · mesmo rc '+g.mesmo_rc+'</div><div>custo '+brl(g.custo_original)+' → '+brl(g.custo_eval)+' · tempo '+(g.min_original??'—')+' → '+(g.min_eval??'—')+' min</div>'
   +((g.piorou||[]).length?'<div class="mau">piorou: '+esc(g.piorou.join(', '))+'</div>':'')+((g.melhorou||[]).length?'<div class="ok">melhorou: '+esc(g.melhorou.join(', '))+'</div>':'')
-  +(e.itens||[]).map(i=>'<div class="mut">'+esc(i.op)+': '+(i.fora?'fora — '+esc(i.fora):i.eval?'rc '+i.original.rc+' → '+i.eval.rc
+  +cur+(e.itens||[]).map(i=>'<div class="mut">'+esc(i.op)+': '+(i.fora?'fora — '+esc(i.fora):i.eval?'rc '+i.original.rc+' → '+i.eval.rc
    +(i.eval.plano?' · '+esc(i.eval.plano):'')+(i.eval.custo!=null?' · '+brl(i.eval.custo):''):'não rodou')+'</div>').join('')}catch(err){}}
 async function ops(){placar();evalsHarness();try{const r=await fetch('api/ops');ultimas=await r.json();
  if(!fixo&&ultimas.length){const a=(ultimas.find(o=>o.em_voo)||ultimas[0]).op;if(a!==op)trocar(a)}desenhar(ultimas);
@@ -761,7 +776,7 @@ class Handler(BaseHTTPRequestHandler):
         elif u.path == "/api/placar":
             self._json(placar())
         elif u.path == "/api/evals":                    # v0.15 — o eval do harness mais recente
-            self._json(evals.ultimo() or {})
+            self._json({**(evals.ultimo() or {}), "em_curso": em_eval()})
         elif u.path == "/api/feed":
             q = parse_qs(u.query)
             pasta = _op_valida((q.get("op") or [""])[0])

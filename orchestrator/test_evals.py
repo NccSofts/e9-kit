@@ -129,6 +129,20 @@ def test_dashboard_mostra_o_eval_mais_recente():
     assert "Evals do harness" in tv.v.PAGINA and "api/evals" in tv.v.PAGINA
 
 
+def test_copia_em_eval_nao_marca_a_op_original_em_voo():
+    """A cópia do eval tem o nome da op original, e a original aparecia EM VOO."""
+    import test_monitor as tv
+    base, d = tv._ops([tv.RESULT], metrics={"status": "OK", "rc": 0})
+    orig = tv.v._runs_vivos
+    tv.v._runs_vivos = lambda: [Path(base).resolve().parent / "evals" / "20261124-1544" / d.name]
+    try:
+        assert tv.v.em_voo() == set() and tv.v.em_eval() == [f"20261124-1544/{d.name}"]
+        tv.v._runs_vivos = lambda: [d.resolve()]
+        assert tv.v.em_voo() == {d.name} and tv.v.em_eval() == []
+    finally:
+        tv.v._runs_vivos = orig
+
+
 if __name__ == "__main__":
     falhas = 0
     for nome, f in sorted(globals().items()):
