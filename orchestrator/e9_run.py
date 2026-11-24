@@ -42,6 +42,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import compat  # noqa: E402 — os nomes antigos das ops de antes da v0.9
 import owner  # noqa: E402 — v0.10, o tempo do owner
+import trajetoria  # noqa: E402 — v0.11, o caminho do agent
 
 # Console em UTF-8 (Windows usa cp1252 por default e engasga em ─ · ←).
 try:
@@ -335,7 +336,7 @@ def timeout_do_portao_ms(cfg, base_s: float) -> int:
     return min(max(int(2 * base_s * 1000), 600_000), teto)
 
 
-def anexar_tempo_do_portao(brief_file: Path, cfg, inicio_base: str) -> None:
+def anexar_tempo_do_portao(brief_file: Path, cfg, inicio_base: str) -> int | None:
     """v0.5.1 — depois da linha de base, o briefing ganha o tempo medido do portão neste voo.
     Numa tarefa real o agente pediu `timeout` de 5 min para uma suíte de 6m20s: o Bash foi para segundo
     plano sozinho, e o agente encerrou "aguardando". O harness sabe o tempo; agora o agente também."""
@@ -348,8 +349,9 @@ def anexar_tempo_do_portao(brief_file: Path, cfg, inicio_base: str) -> None:
                     f"A linha de base (o gate no `main`, antes de você) levou {base_s / 60:.1f} min. "
                     f"Ao rodar o portão no Bash, passe `timeout: {ms}` (ou não passe nenhum). "
                     "Menos que isso e o comando vai para segundo plano sem você pedir.\n")
+        return ms
     except (OSError, ValueError, TypeError):
-        pass
+        return None
 
 
 def _na_worktree(cfg, rel: str) -> str:
@@ -873,6 +875,7 @@ def write_aar(op_dir: Path, op_id, results: dict):
     if m.get("result_text"):
         lines += ["## Relatório do agente (verbatim — desvios declarados, policy §7)", "",
                   m["result_text"], ""]
+    lines += trajetoria.linhas(results.get("trajetoria"))                # v0.11
     if results.get("gate") is not None:
         g = results["gate"]
         partes = [f"{k} {g[k]}" for k in ("ruff", "mypy") if k in g]
@@ -1204,7 +1207,7 @@ def _voar(cfg, op_dir, op_id, opord, alvo, aceite, brief, estado):
         results["baseline_pass"] = base_ok
         results["baseline_gate"] = gate_summary(base_out)
         results["baseline_skipped"] = contagem(base_out).get("skipped", 0)
-        anexar_tempo_do_portao(brief_file, cfg, results["fases"][-1]["inicio"])
+        results["timeout_do_portao_ms"] = anexar_tempo_do_portao(brief_file, cfg, results["fases"][-1]["inicio"])
         if not base_ok:
             results["committed"] = False
             results["gate_tail"] = base_out.strip()[-1500:]
@@ -1244,6 +1247,12 @@ def _voar(cfg, op_dir, op_id, opord, alvo, aceite, brief, estado):
     results["agent_ok"], op_out, results["agent_rc"] = dispatch_agent(
         cfg, brief_file, op_dir / "agent.jsonl")
     results["agent"] = parse_agent_output(op_out)
+    # v0.11 — o caminho do agent, não só o fim: segundo plano, acceptance aberto, teste em paralelo,
+    # rede. Só informa; o rc não muda por isto.
+    results["trajetoria"] = trajetoria.varrer(op_out, acceptance=aceite,
+                                              timeout_min_ms=results.get("timeout_do_portao_ms"))
+    for a in results["trajetoria"]:
+        log("TRJ", f"{a['padrao']} ×{a['n']} — {a['o_que']}")
     restos = matar_restos(cfg["worktree"])
     if restos:
         results["restos_mortos"] = restos

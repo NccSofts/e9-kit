@@ -38,6 +38,8 @@ Os quatro pilares em que o vocabulário da indústria se organiza:
 | status | SITREP | |
 | `op.json` | `op.json` | chaves novas: `target`, `acceptance`, `agent`, `gate`, `reviewer` |
 | engineering metrics (`metrics.json`) | medição da fábrica | custo, tempo, verde de primeira, retrabalho |
+| owner time (`owner_time`, v0.10) | (sem par) | minutos de spec e de revisão, registrados pelo owner |
+| trajectory check (`trajetoria`, v0.11) | (sem par) | varredura determinística do caminho do agent no `agent.jsonl`; só informa |
 
 ## Regras
 

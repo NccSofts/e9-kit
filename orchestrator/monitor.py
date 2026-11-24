@@ -33,6 +33,7 @@ from urllib.parse import parse_qs, urlparse
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import compat  # noqa: E402 — os nomes antigos das ops de antes de 03/11
 import owner  # noqa: E402 — v0.10, o tempo do owner
+import trajetoria  # noqa: E402 — v0.11
 
 OPS = Path(__file__).resolve().parent.parent / "ops"
 LOTE_MAX = 400 * 1024          # bytes por resposta: o navegador não engasga num transcript grande
@@ -123,9 +124,34 @@ _ARQUIVOS_DA_OP = ("agent.jsonl", "operator.jsonl", "metrics.json", "baseline.lo
 
 def _metrics(d: Path) -> dict:
     try:
-        return compat.metrics(json.loads((d / "metrics.json").read_text(encoding="utf-8")))
+        m = compat.metrics(json.loads((d / "metrics.json").read_text(encoding="utf-8")))
     except (OSError, ValueError):
         return {}
+    if m.get("trajetoria") is None:                 # v0.11 — run de antes da varredura
+        t = _trajetoria_retroativa(d)
+        if t is not None:
+            m["trajetoria"], m["trajetoria_retroativa"] = t, True
+    return m
+
+
+_CACHE_TRJ: dict[str, tuple[float, list]] = {}
+
+
+def _trajetoria_retroativa(d: Path) -> list | None:
+    """A varredura do caminho do agent para o run feito antes dela existir, lida do transcript que ficou
+    na máquina (fora do git). Nunca escreve no metrics.json: o histórico não se reescreve. Cache pelo
+    mtime, porque o placar pergunta a cada 15 s e um transcript passa de 5 MB."""
+    jl = d / "agent.jsonl" if (d / "agent.jsonl").exists() else d / "operator.jsonl"
+    try:
+        mt = jl.stat().st_mtime
+    except OSError:
+        return None
+    if _CACHE_TRJ.get(str(jl), (None,))[0] != mt:
+        aceite = [p.relative_to(d / pasta).as_posix() for pasta in ("acceptance", "aceite")
+                  if (d / pasta).is_dir() for p in (d / pasta).rglob("*.py")]
+        _CACHE_TRJ[str(jl)] = (mt, trajetoria.varrer(jl.read_text(encoding="utf-8", errors="replace"),
+                                                     acceptance=aceite))
+    return _CACHE_TRJ[str(jl)][1]
 
 
 def listar_ops() -> list[dict]:
@@ -373,7 +399,10 @@ def placar() -> dict:
             "custo_total": round(sum(custos), 2), "custo_medio": round(sum(custos) / len(custos), 2) if custos else None,
             "voo_medio_min": round(sum(tempos) / len(tempos) / 60, 1) if tempos else None,
             "divergiu": sum(1 for v in com_gate if v.get("divergencias")), "com_gate": len(com_gate),
-            "owner": owner.placar(voos)}
+            "owner": owner.placar(voos),
+            # v0.11 — runs cuja trajetória teve achado, entre os que foram varridos
+            "trajetoria": {"varridos": sum(1 for v in voos if v.get("trajetoria") is not None),
+                           "com_achado": sum(1 for v in voos if v.get("trajetoria"))}}
 
 
 def etapas(fases: list) -> list[dict]:
@@ -419,6 +448,8 @@ def aar(m: dict) -> dict:
         "etapas": etapas(m.get("fases") or []),
         "revisao": m.get("review"),
         "owner": m.get("owner_time"),
+        "trajetoria": m.get("trajetoria"),
+        "trajetoria_retroativa": bool(m.get("trajetoria_retroativa")),
         "relatorio": relatorio[:12000],
     }
 
@@ -593,6 +624,9 @@ function desenharAar(a){const chave=JSON.stringify(a)+'|'+recusas;if(chave===aar
   +esc({como_veio:'entrou como o agente entregou',consertado:'entrou depois de conserto',descartado:'não entrou'}[rv.desfecho]||rv.desfecho)+'</span>'
   +(rv.commit_alvo?' · <code>'+esc(rv.commit_alvo)+'</code>':'')+(rv.nota?'<div>'+esc(rv.nota)+'</div>':''))
   :'<span class="mut">sem revisão gravada (orchestrator/revisar.py)</span>');
+ if(a.trajetoria)h+=fato('Trajetória do agent (só informa'+(a.trajetoria_retroativa?' · varrida depois do run':'')+')',!a.trajetoria.length?'<span class="ok">nenhum padrão conhecido no caminho</span>':
+  a.trajetoria.map(t=>'<div class="mau">⚠ '+esc(t.padrao)+' ×'+t.n+' <span class="mut">— '+esc(t.o_que)+'</span></div>'
+  +(t.exemplos||[]).map(x=>'<div class="mut"><code>'+esc(x)+'</code></div>').join('')).join(''));
  const ow=a.owner||{},omin=v=>v==null?'<span class="mut">não registrado</span>':esc(v)+' min';
  h+=fato('Tempo do owner (spec e revisão)',ow.spec_min==null&&ow.review_min==null?'<span class="mut">não registrado (revisar.py --spec-min / --revisao-min)</span>':
   'spec '+omin(ow.spec_min)+' · revisão '+omin(ow.review_min)+(a.agente_min?' <span class="mut">· agent '+esc(a.agente_min)+' min</span>':''));
@@ -625,7 +659,8 @@ async function placar(){try{const p=await(await fetch('api/placar')).json();cons
   +'<div>relatório × gate divergiu: <b class="'+(p.divergiu?'mau':'ok')+'">'+p.divergiu+'</b> de '+p.com_gate+'</div>'
   +'<div>custo '+brl(p.custo_total)+' · média '+brl(p.custo_medio)+' · run médio '+(p.voo_medio_min??'—')+' min</div>'
   +(()=>{const o=p.owner||{};return o.ops?'<div>tempo do owner: spec <b>'+o.spec_min+'</b> min ('+o.spec_n+') · revisão <b>'+o.review_min+'</b> min ('+o.review_n+') · agent '+o.agente_min+' min nas mesmas '+o.ops+'</div>'
-   :'<div class="mut">tempo do owner: nenhuma op registrou ainda</div>'})()}catch(e){}}
+   :'<div class="mut">tempo do owner: nenhuma op registrou ainda</div>'})()
+  +(()=>{const t=p.trajetoria||{};return t.varridos?'<div>trajetória com achado: <b class="'+(t.com_achado?'mau':'ok')+'">'+t.com_achado+'</b> de '+t.varridos+' varridos</div>':''})()}catch(e){}}
 async function ops(){placar();try{const r=await fetch('api/ops');ultimas=await r.json();
  if(!fixo&&ultimas.length){const a=(ultimas.find(o=>o.em_voo)||ultimas[0]).op;if(a!==op)trocar(a)}desenhar(ultimas);
  document.getElementById('lig').innerHTML='Conexão <b>OK</b>'}catch(e){document.getElementById('lig').innerHTML='Conexão <b style="color:var(--vermelho)">PERDIDA</b>'}}

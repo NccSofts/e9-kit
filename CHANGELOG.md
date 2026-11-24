@@ -2,6 +2,21 @@
 
 As versões do kit, da mais nova para a mais antiga. As mudanças de comportamento vêm com o motivo, porque cada uma nasceu de uma falha medida.
 
+## v0.11 (2026-11-24) — o caminho do agent, não só o fim
+
+- **`orchestrator/trajetoria.py`**: varre o `agent.jsonl`, sem modelo, atrás de cinco padrões que
+  custaram runs de verdade e não deixam marca na árvore entregue: `segundo_plano` (comando mandado ou
+  jogado para segundo plano, relatório que encerra "aguardando"), `timeout_curto` (teste com `timeout`
+  abaixo do tempo medido na baseline), `acceptance_aberto` (o sha256 só vê o estado final: editar e
+  desfazer passa), `teste_em_paralelo` e `rede`. **Só informa**: vai ao `metrics.json`, ao run report
+  e ao Monitor, e o rc não muda.
+- Lê cada comando pela cabeça de cada trecho (`&&`, `;`, `|`), sem ambiente nem prefixos, e ignora o
+  corpo de heredoc: `ps aux | grep pytest` não é teste, `pytest x.py 2>&1` não edita o `x.py`. As três
+  confusões da primeira versão viraram casos de teste.
+- O Monitor varre também os runs feitos antes da v0.11, pelo transcript que ficou na máquina, sem
+  reescrever o `metrics.json`.
+- `python3 orchestrator/trajetoria.py --op ops/<op>` varre runs já feitos. 9 casos novos.
+
 ## v0.10 (2026-11-24) — o tempo do owner
 
 - **`orchestrator/owner.py`**: os minutos de spec (`"owner": {"spec_min": N}` no `op.json`, ou

@@ -23,6 +23,10 @@
 - **Acceptance tests e traceability:** a matriz requirement × test × base × entrega.
 - **AI code review** (se ligado): o veredito e os achados — informa, não decide.
 - **Custo:** tokens e US$ por run. **Tempo:** wall-clock.
+- **Trajetória do agent (v0.11):** a varredura do `agent.jsonl` — segundo plano, timeout curto,
+  acceptance test aberto para edição, teste em paralelo, rede. Só informa.
+- **Tempo do owner (v0.10):** minutos de spec e de revisão, registrados pelo owner (`owner.spec_min`
+  no `op.json`, `revisar.py --spec-min` / `--revisao-min`), ao lado dos minutos de agent.
 
 ### Situação final
 - **Branch:** `feat/...` @ <sha> — buildável? gate verde?
