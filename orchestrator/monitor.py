@@ -32,6 +32,7 @@ from urllib.parse import parse_qs, urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import compat  # noqa: E402 — os nomes antigos das ops de antes de 03/11
+import owner  # noqa: E402 — v0.10, o tempo do owner
 
 OPS = Path(__file__).resolve().parent.parent / "ops"
 LOTE_MAX = 400 * 1024          # bytes por resposta: o navegador não engasga num transcript grande
@@ -371,7 +372,8 @@ def placar() -> dict:
     return {"voos": n, "desfechos": rot, "revisao": rev, "verde_de_primeira": primeira, "revoos": revoos,
             "custo_total": round(sum(custos), 2), "custo_medio": round(sum(custos) / len(custos), 2) if custos else None,
             "voo_medio_min": round(sum(tempos) / len(tempos) / 60, 1) if tempos else None,
-            "divergiu": sum(1 for v in com_gate if v.get("divergencias")), "com_gate": len(com_gate)}
+            "divergiu": sum(1 for v in com_gate if v.get("divergencias")), "com_gate": len(com_gate),
+            "owner": owner.placar(voos)}
 
 
 def etapas(fases: list) -> list[dict]:
@@ -416,6 +418,7 @@ def aar(m: dict) -> dict:
         "restos_mortos": len(m.get("restos_mortos") or []),
         "etapas": etapas(m.get("fases") or []),
         "revisao": m.get("review"),
+        "owner": m.get("owner_time"),
         "relatorio": relatorio[:12000],
     }
 
@@ -590,6 +593,9 @@ function desenharAar(a){const chave=JSON.stringify(a)+'|'+recusas;if(chave===aar
   +esc({como_veio:'entrou como o agente entregou',consertado:'entrou depois de conserto',descartado:'não entrou'}[rv.desfecho]||rv.desfecho)+'</span>'
   +(rv.commit_alvo?' · <code>'+esc(rv.commit_alvo)+'</code>':'')+(rv.nota?'<div>'+esc(rv.nota)+'</div>':''))
   :'<span class="mut">sem revisão gravada (orchestrator/revisar.py)</span>');
+ const ow=a.owner||{},omin=v=>v==null?'<span class="mut">não registrado</span>':esc(v)+' min';
+ h+=fato('Tempo do owner (spec e revisão)',ow.spec_min==null&&ow.review_min==null?'<span class="mut">não registrado (revisar.py --spec-min / --revisao-min)</span>':
+  'spec '+omin(ow.spec_min)+' · revisão '+omin(ow.review_min)+(a.agente_min?' <span class="mut">· agent '+esc(a.agente_min)+' min</span>':''));
  h+='</div>';
  if(a.relatorio)h+='<details class="dep"><summary class="cx">Relatório do agente · a declaração (abrir)</summary><div class="md">'+md(a.relatorio)+'</div></details>';
  caixa.innerHTML=h}
@@ -617,7 +623,9 @@ async function placar(){try{const p=await(await fetch('api/placar')).json();cons
   +'<div>verde de primeira: <b class="ok">'+(p.verde_de_primeira??'—')+'</b> de '+p.voos+(p.revoos?' · '+p.revoos+' com re-run':'')+'</div>'
   +'<div>entrou no target como veio: <b class="ok">'+rv.como_veio+'</b> · consertada '+rv.consertado+' · descartada '+rv.descartado+(rv.sem?' · <span class="mau">sem revisão '+rv.sem+'</span>':'')+'</div>'
   +'<div>relatório × gate divergiu: <b class="'+(p.divergiu?'mau':'ok')+'">'+p.divergiu+'</b> de '+p.com_gate+'</div>'
-  +'<div>custo '+brl(p.custo_total)+' · média '+brl(p.custo_medio)+' · run médio '+(p.voo_medio_min??'—')+' min</div>'}catch(e){}}
+  +'<div>custo '+brl(p.custo_total)+' · média '+brl(p.custo_medio)+' · run médio '+(p.voo_medio_min??'—')+' min</div>'
+  +(()=>{const o=p.owner||{};return o.ops?'<div>tempo do owner: spec <b>'+o.spec_min+'</b> min ('+o.spec_n+') · revisão <b>'+o.review_min+'</b> min ('+o.review_n+') · agent '+o.agente_min+' min nas mesmas '+o.ops+'</div>'
+   :'<div class="mut">tempo do owner: nenhuma op registrou ainda</div>'})()}catch(e){}}
 async function ops(){placar();try{const r=await fetch('api/ops');ultimas=await r.json();
  if(!fixo&&ultimas.length){const a=(ultimas.find(o=>o.em_voo)||ultimas[0]).op;if(a!==op)trocar(a)}desenhar(ultimas);
  document.getElementById('lig').innerHTML='Conexão <b>OK</b>'}catch(e){document.getElementById('lig').innerHTML='Conexão <b style="color:var(--vermelho)">PERDIDA</b>'}}

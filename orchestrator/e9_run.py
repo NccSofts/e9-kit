@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-e9_run.py — o harness do E-9 kit: executa UMA op (um run de um agente de código), v0.9.
+e9_run.py — o harness do E-9 kit: executa UMA op (um run de um agente de código), v0.10.
 
 Roda o Claude Code sem ninguém olhando (`claude -p`) numa worktree isolada do seu repositório e decide
 de fora se o resultado presta. O ciclo:
@@ -41,6 +41,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import compat  # noqa: E402 — os nomes antigos das ops de antes da v0.9
+import owner  # noqa: E402 — v0.10, o tempo do owner
 
 # Console em UTF-8 (Windows usa cp1252 por default e engasga em ─ · ←).
 try:
@@ -102,6 +103,10 @@ def load_op(op_dir: Path, targets_dir: Path | None = None):
     for danger in ("git push", "git merge", "git reset", "git rebase"):  # policy §2/§10
         if danger in blob:
             sys.exit(f"ABORT (policy §2/§10): op.json contém '{danger}' — proibido no harness.")
+    try:                                                                # v0.10
+        owner.do_op_json(cfg)
+    except (ValueError, KeyError) as e:
+        sys.exit(f"ABORT (owner): {e}")
     if cfg.get("acceptance") is not None:                                   # v0.4
         if not (cfg["acceptance"] or {}).get("cmd"):
             sys.exit("ABORT (aceite): `aceite.cmd` ausente — sem comando não há o que provar.")
@@ -933,6 +938,7 @@ def write_aar(op_dir: Path, op_id, results: dict):
                   f"python orchestrator/revisar.py --op ops/{op_dir.name} --consertado \"o que mudou\" --commit-alvo <sha>",
                   f"python orchestrator/revisar.py --op ops/{op_dir.name} --descartado \"por quê\"",
                   "```", ""]
+    lines += owner.linhas(results)                                      # v0.10
     lines += ["## Arquivos brutos (ficam na máquina, fora do git)",
               "- `agent.jsonl` — saída integral do agente (stream-json).",
               "- `gate.log` — saída integral do gate.", ""]
@@ -1110,6 +1116,8 @@ def _voar(cfg, op_dir, op_id, opord, alvo, aceite, brief, estado):
     results["previous_runs"] = previous_runs(op_dir)
     if cfg.get("treino"):
         results["treino"] = True
+    if owner.do_op_json(cfg):                                            # v0.10 — os minutos de spec
+        results["owner_time"] = owner.do_op_json(cfg)
     ok, out = setup_worktree(cfg)
     if not ok:
         log("ABORT", f"worktree falhou:\n{out}")

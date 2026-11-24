@@ -2,6 +2,17 @@
 
 As versões do kit, da mais nova para a mais antiga. As mudanças de comportamento vêm com o motivo, porque cada uma nasceu de uma falha medida.
 
+## v0.10 (2026-11-24) — o tempo do owner
+
+- **`orchestrator/owner.py`**: os minutos de spec (`"owner": {"spec_min": N}` no `op.json`, ou
+  `revisar.py --spec-min N`) e de revisão (`revisar.py --revisao-min N`) vão ao `metrics.json`
+  (`owner_time`), à seção "## Tempo do owner" do run report e ao Monitor, ao lado dos minutos de
+  agent. O argumento de que o gargalo saiu do código para as pontas não tinha número; agora tem,
+  quando o owner anota. Número inválido é recusado antes de gravar qualquer coisa.
+- `revisar.py` passa a aceitar só os minutos, sem desfecho, e `--consertado ""` deixou de virar
+  descartado.
+- `orchestrator/test_owner.py`: 6 casos.
+
 ## v0.9.1 (2026-11-04) — Monitor E-9
 
 - **`orchestrator/monitor.py`**: a página que mostra o run ao vivo (o log do agent, a etapa com o
