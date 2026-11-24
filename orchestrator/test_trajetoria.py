@@ -54,7 +54,7 @@ def test_o_que_so_parece_teste_nao_e_teste():
     """Visto na calibração: `ps aux | grep pytest` contava como rodada de teste."""
     assert not tj.roda_teste("ps aux | grep pytest | grep -v grep")
     assert not tj.roda_teste("until ! pgrep -f pytest; do sleep 5; done")
-    assert tj.roda_teste("CITATO_X=1 PYTHONPATH=src /v/bin/pytest -q tests/a.py 2>&1 | tail")
+    assert tj.roda_teste("APP_X=1 PYTHONPATH=src /v/bin/pytest -q tests/a.py 2>&1 | tail")
     assert tj.roda_teste("cd w && python3 -m unittest tests.test_x")
 
 
